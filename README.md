@@ -22,7 +22,7 @@ For this you will need to launch the code using mpirun
 
 
 ```
-mpirun -np 2 python eval_top_k.py --top-k 128 --model-id facebook/opt-13b
+mpirun -np 2 python eval_top_k.py --top-k 128 --model-id facebook/opt-13b --use-axonn
 
 ```
 
