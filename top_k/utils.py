@@ -2,8 +2,10 @@ import torch
 
 
 def mask_top_k_elements_3d(tensor, k, dim=2):
+    # For when k is more than the context length
+    topk = min(k, tensor.shape[1])
     # Find the indices of the top k elements along the specified dimension
-    _, indices = tensor.topk(k, dim=dim, largest=True)
+    _, indices = tensor.topk(topk, dim=dim, largest=True)
 
     # Create a mask with zeros and ones
     mask = torch.full_like(tensor, fill_value=float('-inf'))
