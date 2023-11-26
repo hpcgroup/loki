@@ -8,4 +8,4 @@ from .modify_opt import get_top_k_forward_opt
 
 def make_attention_top_k(top_k):
     OPTAttention.forward = get_top_k_forward_opt(top_k)
-    GPTNeoXAttention.forward = get_top_k_forward_gpt_neox(top_k)
+    GPTNeoXAttention._attn = get_top_k_forward_gpt_neox(top_k)
