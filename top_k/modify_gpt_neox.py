@@ -46,6 +46,7 @@ def get_top_k_forward_gpt_neox(top_k):
             # Apply the attention mask
             attn_scores = attn_scores + attention_mask
 
+        attn_scores = mask_top_k_elements_3d(attn_scores, k=top_k)
         attn_weights = nn.functional.softmax(attn_scores, dim=-1)
         attn_weights = attn_weights.to(value.dtype)
 
