@@ -3,6 +3,8 @@ import torch
 
 def mask_top_k_elements_3d(tensor, k, dim=2):
     # Find the indices of the top k elements along the specified dimension
+    if tensor.shape[dim] <= k:
+        return tensor
     _, indices = tensor.topk(k, dim=dim, largest=True)
 
     # Create a mask with zeros and ones
