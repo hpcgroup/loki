@@ -1,5 +1,5 @@
 from lm_perplexity_eval import evaluate
-from top_k.modify_opt import make_attention_top_k 
+from top_k.modify_models import make_attention_top_k 
 import argparse
 
 parser = argparse.ArgumentParser()

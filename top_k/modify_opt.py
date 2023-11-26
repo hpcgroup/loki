@@ -1,5 +1,4 @@
 from typing import List, Optional, Tuple, Union
-from transformers.models.opt.modeling_opt import OPTAttention
 import torch
 from torch import nn
 from functools import partial
@@ -7,7 +6,7 @@ from functools import partial
 
 from .utils import mask_top_k_elements_3d
 
-def get_top_k_forward(top_k):
+def get_top_k_forward_opt(top_k):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -130,5 +129,3 @@ def get_top_k_forward(top_k):
         return attn_output, attn_weights_reshaped, past_key_value
     return modified_forward
 
-def make_attention_top_k(top_k):
-    OPTAttention.forward = get_top_k_forward(top_k)
