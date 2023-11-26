@@ -130,5 +130,6 @@ def get_top_k_forward(top_k):
         return attn_output, attn_weights_reshaped, past_key_value
     return modified_forward
 
-def make_attention_top_k(top_k):
+def make_attention_top_k_opt(top_k):
+    print ("Modifying OPT Attention")
     OPTAttention.forward = get_top_k_forward(top_k)
