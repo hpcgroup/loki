@@ -1,10 +1,11 @@
+import time
 from typing import List, Optional, Tuple, Union
 import torch
 from torch import nn
 from functools import partial
 
 
-from .utils import mask_top_k_elements_3d
+from .utils import mask_top_k_elements_3d, faiss_attention
 
 def get_top_k_forward_opt(top_k):
     def modified_forward(
@@ -61,7 +62,13 @@ def get_top_k_forward_opt(top_k):
         value_states = value_states.view(*proj_shape)
 
         src_len = key_states.size(1)
+        t1 = time.perf_counter()
+        attn_weights = faiss_attention(query_states, key_states, top_k)
+        t2 = time.perf_counter()
+        with open('./faiss_attention.txt', 'a') as file:
+            file.write(f"{t2-t1}\n")
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
+        t3 = time.perf_counter()
 
         if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):
             raise ValueError(
@@ -80,7 +87,11 @@ def get_top_k_forward_opt(top_k):
             )
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
-        attn_weights = mask_top_k_elements_3d(attn_weights, k=top_k)
+        t4 = time.perf_counter()
+        #attn_weights = mask_top_k_elements_3d(attn_weights, k=top_k)
+        t5 = time.perf_counter()
+        #with open('./vanilla_topk.txt', 'a') as file:
+        #    file.write(f"{t3-t2}\t{t5-t4}\n")
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
         if attn_weights.dtype == torch.float16:
             attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(torch.float16)
