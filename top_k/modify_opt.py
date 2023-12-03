@@ -67,7 +67,7 @@ def get_top_k_forward_opt(top_k):
         t2 = time.perf_counter()
         with open('./faiss_attention.txt', 'a') as file:
             file.write(f"{t2-t1}\n")
-        attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
+        #attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
         t3 = time.perf_counter()
 
         if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):

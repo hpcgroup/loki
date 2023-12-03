@@ -22,12 +22,15 @@ def faiss_attention(query_states, key_states, k):
     """
     num_heads, seq_len, hidden_size = query_states.shape
     topk = min(k, seq_len)
+    print(num_heads, seq_len, hidden_size, topk)
     indexes = [get_index(INDEX_TYPE, hidden_size) for _ in range(num_heads)]
     attention = torch.full((num_heads, seq_len, seq_len), float('-inf')).cuda(query_states.device)
 
     for head_index, index in enumerate(indexes):
         index.add(key_states[head_index].float())
         attn_scores, attn_indexes = index.search(query_states[head_index].float(), topk)
+        debug_values, debug_indices = torch.max(attn_indexes, dim=-1)
+        print(debug_indices)
         curr_attention = torch.full((seq_len, seq_len), float('-inf')).cuda(query_states.device)
         curr_attention.scatter_(-1, attn_indexes, attn_scores)
         attention[head_index] = curr_attention
