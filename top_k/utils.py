@@ -29,8 +29,6 @@ def faiss_attention(query_states, key_states, k):
     for head_index, index in enumerate(indexes):
         index.add(key_states[head_index].float())
         attn_scores, attn_indexes = index.search(query_states[head_index].float(), topk)
-        debug_values, debug_indices = torch.max(attn_indexes, dim=-1)
-        print(debug_indices)
         curr_attention = torch.full((seq_len, seq_len), float('-inf')).cuda(query_states.device)
         curr_attention.scatter_(-1, attn_indexes, attn_scores)
         attention[head_index] = curr_attention
