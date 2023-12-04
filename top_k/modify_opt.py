@@ -26,6 +26,7 @@ def get_top_k_forward_opt(top_k):
 
         # get query proj
         query_states = self.q_proj(hidden_states) * self.scaling
+        
         # get key, value proj
         if is_cross_attention and past_key_value is not None:
             # reuse k,v, cross_attentions
@@ -63,11 +64,11 @@ def get_top_k_forward_opt(top_k):
 
         src_len = key_states.size(1)
         t1 = time.perf_counter()
-        #attn_weights = faiss_attention(query_states, key_states, top_k)
+        attn_weights = faiss_attention(query_states, key_states, top_k)
         t2 = time.perf_counter()
         #with open('./faiss_attention.txt', 'a') as file:
         #    file.write(f"{t2-t1}\n")
-        attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
+        #attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
         t3 = time.perf_counter()
 
         if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):
@@ -88,7 +89,7 @@ def get_top_k_forward_opt(top_k):
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
         t4 = time.perf_counter()
-        attn_weights = mask_top_k_elements_3d(attn_weights, k=top_k)
+        #attn_weights = mask_top_k_elements_3d(attn_weights, k=top_k)
         t5 = time.perf_counter()
         #with open('./vanilla_topk.txt', 'a') as file:
         #    file.write(f"{t3-t2}\t{t5-t4}\n")

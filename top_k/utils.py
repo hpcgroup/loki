@@ -22,15 +22,34 @@ def faiss_attention(query_states, key_states, k):
     """
     num_heads, seq_len, hidden_size = query_states.shape
     topk = min(k, seq_len)
-    print(num_heads, seq_len, hidden_size, topk)
     indexes = [get_index(INDEX_TYPE, hidden_size) for _ in range(num_heads)]
     attention = torch.full((num_heads, seq_len, seq_len), float('-inf')).cuda(query_states.device)
+    #filter_ids = [[0 for _y in range(seq_len)] for _x in range(seq_len)]
+    #id_selector = faiss.IDSelectorArray(filter_ids)
 
     for head_index, index in enumerate(indexes):
-        index.add(key_states[head_index].float())
-        attn_scores, attn_indexes = index.search(query_states[head_index].float(), topk)
-        curr_attention = torch.full((seq_len, seq_len), float('-inf')).cuda(query_states.device)
-        curr_attention.scatter_(-1, attn_indexes, attn_scores)
+        list_tensors = []
+        for idx in range(seq_len):
+            index.add(key_states[head_index][idx].view(1, hidden_size).float())
+            attn_scores, attn_indexes = index.search(query_states[head_index][idx].view(1, hidden_size).float(), topk)
+            #print(attn_indexes[:, :idx+1])
+            #print(attn_scores[:, :idx+1])
+            temp_tensor = torch.full((1, seq_len), float('-inf')).cuda(query_states.device)
+            temp_tensor.scatter_(-1, attn_indexes[:, :idx+1], attn_scores[:, :idx+1])
+            #print(temp_tensor)
+            list_tensors.append(temp_tensor)
+        curr_attention = torch.cat(list_tensors)
+        #print(curr_attention)
+        
+        
+        #index.add(key_states[head_index].float())
+        #attn_scores, attn_indexes = index.search(query_states[head_index].float(), topk)
+        #print(attn_indexes)
+        #print(attn_scores)
+        #curr_attention = torch.full((seq_len, seq_len), float('-inf')).cuda(query_states.device)
+        #curr_attention.scatter_(-1, attn_indexes, attn_scores)
+        
+        
         attention[head_index] = curr_attention
     # todo(Siddhant): how to delete the entire index?
     for _index in indexes:
@@ -68,4 +87,4 @@ if __name__ == '__main__':
         print(f">>>>>>> faiss attention using {INDEX_TYPE}")
         print(faiss_attention(query_states, key_states, topk))
         print(f">>>>>>> using old method (torch.bmm followed by masking topk)")
-        print(mask_top_k_elements_3d(torch.bmm(query_states, key_states.transpose(1, 2)), topk))
+        print(mask_top_k_elements_3d(torch.bmm(query_states, key_states.transpose(1, 2)), 4))
