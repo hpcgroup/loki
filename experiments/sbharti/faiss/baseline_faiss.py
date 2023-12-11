@@ -90,6 +90,14 @@ def run(index_type):
         mask = torch.full_like(q_dot_k, fill_value=float('-inf'))
         mask.scatter_(-1, torch_mm_indices, q_dot_k.gather(-1, torch_mm_indices))
 
+    mask[mask == float('-inf')] = float('-1e10')
+    curr_attention[curr_attention == float('-inf')] = float('-1e10')
+
+    is_close = torch.all(torch.abs(curr_attention - mask) < 0.01)
+    if is_close:
+        print("The Q.K_t from two methods are close.")
+    else:
+        print("The Q.K_t from two methods are not close.")
 
 if __name__ == '__main__':
     run(INDEX_TYPE)
