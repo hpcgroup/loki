@@ -2,8 +2,8 @@ import time
 
 import torch
 
-DIM = 100000
-NUM_SAMPLES = 30
+DIM = 500
+NUM_SAMPLES = 1
 
 times = []
 for e in range(NUM_SAMPLES):

@@ -18,8 +18,8 @@ class TimeIt:
         print(f"Executed {self.message} in {elapsed_time:.4f} seconds")
 
 
-DIM = 100000
-NUM_SAMPLES = 30
+DIM = 500
+NUM_SAMPLES = 1
 
 times = []
 for e in range(NUM_SAMPLES):
