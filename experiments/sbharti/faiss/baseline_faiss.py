@@ -13,9 +13,11 @@ SEQ_LEN = 2048
 TOP_K = 30
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
 
-# Index (one of GpuIndexFlatIP|GpuIndexIVFFlat)
-INDEX_TYPE = 'GpuIndexIVFFlat'
-NLIST = 180
+# Index (one of GpuIndexFlatIP|GpuIndexIVFFlat|GpuIndexIVFPQ)
+INDEX_TYPE = 'GpuIndexIVFPQ'
+NLIST = 10
+NSUBQUANTIZER = 16
+NBITS_PER_QUANTIZER = 8  #GPU version only support this value :shrug:
 
 
 class TimeIt:
@@ -39,6 +41,8 @@ def get_index(index_type, vector_size):
         index = faiss.GpuIndexFlatIP(STANDARD_GPU_RESOURCE, vector_size)
     if index_type == 'GpuIndexIVFFlat':
         index = faiss.GpuIndexIVFFlat(STANDARD_GPU_RESOURCE, DIMENTION, NLIST, faiss.METRIC_INNER_PRODUCT)
+    if index_type == 'GpuIndexIVFPQ':
+        index = faiss.GpuIndexIVFPQ(STANDARD_GPU_RESOURCE, DIMENTION, NLIST, NSUBQUANTIZER, NBITS_PER_QUANTIZER, faiss.METRIC_INNER_PRODUCT)
     return index
 
 
