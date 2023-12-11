@@ -65,8 +65,6 @@ def run(index_type):
         scores, indices = scoped_q_dot_k.topk(TOP_K, dim=-1, largest=True)
         set_index_exact = set()
         print_tensor = torch.cat((indices.transpose(0, 1), scores.transpose(0, 1)), -1)
-        print("Exact result is:")
-        print(print_tensor)
         for idx in indices[0]:
             _idx = int(idx.cpu().numpy())
             set_index_exact.add(_idx)
@@ -74,8 +72,9 @@ def run(index_type):
         attn_scores_1, attn_indexes_1 = index.search(scoped_query, TOP_K)
         set_index_faiss = set()
         print_tensor_1 = torch.cat((attn_indexes_1.transpose(0, 1), attn_scores_1.transpose(0, 1)), -1)
-        print("Faiss result is:")
-        print(print_tensor_1)
+        print("exact_index, exact_score, faiss_index, faiss_score")
+        print_tensor_2 = torch.cat((print_tensor, print_tensor_1), -1)
+        print(print_tensor_2)
         for idx in attn_indexes_1[0]:
             _idx = int(idx.cpu().numpy())
             set_index_faiss.add(_idx)
