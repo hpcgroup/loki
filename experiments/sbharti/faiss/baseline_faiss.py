@@ -13,8 +13,9 @@ SEQ_LEN = 2048
 TOP_K = 30
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
 
-# Index
+# Index (one of GpuIndexFlatIP|GpuIndexIVFFlat)
 INDEX_TYPE = 'GpuIndexFlatIP'
+NLIST = 10
 
 
 class TimeIt:
@@ -36,6 +37,8 @@ def get_index(index_type, vector_size):
     index = None
     if index_type == 'GpuIndexFlatIP':
         index = faiss.GpuIndexFlatIP(STANDARD_GPU_RESOURCE, vector_size)
+    if index_type == 'GpuIndexIVFFlat':
+        index = faiss.GpuIndexIVFFlat(STANDARD_GPU_RESOURCE, DIMENTION, NLIST, faiss.METRIC_INNER_PRODUCT)
     return index
 
 
@@ -49,6 +52,10 @@ def run(index_type):
     t1 = time.perf_counter()
     with TimeIt("creating index"):
         index = get_index(index_type, DIMENTION)
+
+    if not index.is_trained:
+        with TimeIt("training the index with keys"):
+            index.train(keys)
 
     with TimeIt("adding to index"):
         index.add(keys)
