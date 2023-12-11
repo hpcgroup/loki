@@ -14,8 +14,8 @@ TOP_K = 30
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
 
 # Index (one of GpuIndexFlatIP|GpuIndexIVFFlat|GpuIndexIVFPQ)
-INDEX_TYPE = 'GpuIndexIVFPQ'
-NLIST = 10
+INDEX_TYPE = 'GpuIndexIVFFlat'
+NLIST = 180
 NSUBQUANTIZER = 16
 NBITS_PER_QUANTIZER = 8  #GPU version only support this value :shrug:
 
@@ -26,10 +26,12 @@ class TimeIt:
         self.message = args[0]
 
     def __enter__(self):
+        torch.cuda.synchronize()
         self.start_time = time.perf_counter()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        torch.cuda.synchronize()
         self.end_time = time.perf_counter()
         elapsed_time = self.end_time - self.start_time
         print(f"Executed {self.message} in {elapsed_time:.4f} seconds")
@@ -53,6 +55,7 @@ def run(index_type):
     print("keys: ", keys.shape)
     print("queries: ", keys.shape)
 
+    torch.cuda.synchronize()
     t1 = time.perf_counter()
     with TimeIt("creating index"):
         index = get_index(index_type, DIMENTION)
@@ -72,6 +75,7 @@ def run(index_type):
         curr_attention = torch.full((SEQ_LEN, SEQ_LEN), float('-inf')).cuda()
         curr_attention.scatter_(-1, attn_indexes, attn_scores)
 
+    torch.cuda.synchronize()
     t2 = time.perf_counter()
     print(f"Executed faiss based Q.K_t with topk in {t2-t1:.4f} seconds")
     with TimeIt("sanity check on scores and indexes (considering only first query)"):
