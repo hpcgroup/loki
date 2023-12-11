@@ -15,11 +15,11 @@ class TimeIt:
     def __exit__(self, exc_type, exc_value, traceback):
         self.end_time = time.perf_counter()
         elapsed_time = self.end_time - self.start_time
-        print(f"Executed {self.message} in {elapsed_time:.4f} seconds")
+        print(f"Executed {self.message} in {elapsed_time:.8f} seconds")
 
 
 DIM = 500
-NUM_SAMPLES = 1
+NUM_SAMPLES = 3
 
 times = []
 for e in range(NUM_SAMPLES):
@@ -27,10 +27,10 @@ for e in range(NUM_SAMPLES):
     mat2 = torch.rand(DIM, DIM).cuda()
     start_epoch = time.perf_counter()
     with TimeIt(f"matmul on 2 {DIM}x{DIM} matrix"):
-        torch.mm(mat1, mat2)
+       x =  torch.mm(mat1, mat2)
     end_epoch = time.perf_counter()
     elapsed = end_epoch - start_epoch
-    print(f"time measurement outside context manager: {elapsed:.4f} seconds")
+    print(f"time measurement outside context manager: {elapsed:.8f} seconds")
     times.append(elapsed)
 
 avg_time = sum(times)/NUM_SAMPLES
