@@ -8,7 +8,7 @@ torch.set_printoptions(precision=10)
 
 # Constants
 DIMENTION = 768
-SEQ_LEN = 2048
+SEQ_LEN = 12048
 TOP_K = 30
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
 
