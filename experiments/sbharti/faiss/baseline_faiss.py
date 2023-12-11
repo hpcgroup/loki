@@ -22,9 +22,8 @@ class TimeIt:
         # save args as attributes
         self.message = args[0]
 
-    def __enter__(self, message: str):
+    def __enter__(self):
         self.start_time = time.perf_counter()
-        self.message = message
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -61,8 +60,8 @@ def run(index_type):
         curr_attention.scatter_(-1, attn_indexes, attn_scores)
 
     with TimeIt("sanity check on scores and indexes (considering only first query)"):
-        scoped_query = queries[0].view(1, SEQ_LEN)
-        scoped_q_dot_k = torch.mm(scoped_query, keys.transpose(1, 2))
+        scoped_query = queries[0].view(1, DIMENTION)
+        scoped_q_dot_k = torch.mm(scoped_query, keys.transpose(0, 1))
         scores, indices = scoped_q_dot_k.topk(TOP_K, dim=-1, largest=True)
         set_index_exact = set()
         print_tensor = torch.cat((indices.transpose(0, 1), scores.transpose(0, 1)), -1)
@@ -77,14 +76,15 @@ def run(index_type):
         print("Faiss result is:")
         print(print_tensor_1)
         for idx in attn_indexes_1[0]:
-            set_index_faiss.add(idx.cpu().numpy())
+            print(idx.cpu())
+            #set_index_faiss.add(idx.cpu().numpy())
         print("set_index_faiss - set_index_exact: ", set_index_faiss - set_index_exact)
         print("set_index_exact - set_index_faiss: ", set_index_exact - set_index_faiss)
 
 
 
     with TimeIt("torch.mm on keys and queries"):
-        q_dot_k = torch.mm(queries, keys.transpose(1, 2))
+        q_dot_k = torch.mm(queries, keys.transpose(0, 1))
         _, torch_mm_indices = q_dot_k.topk(TOP_K, dim=-1, largest=True)
         mask = torch.full_like(q_dot_k, fill_value=float('-inf'))
         mask.scatter_(-1, torch_mm_indices, q_dot_k.gather(-1, torch_mm_indices))
