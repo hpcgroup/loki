@@ -14,8 +14,8 @@ TOP_K = 30
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
 
 # Index (one of GpuIndexFlatIP|GpuIndexIVFFlat)
-INDEX_TYPE = 'GpuIndexFlatIP'
-NLIST = 10
+INDEX_TYPE = 'GpuIndexIVFFlat'
+NLIST = 180
 
 
 class TimeIt:
@@ -63,6 +63,7 @@ def run(index_type):
     with TimeIt("getting attn_scores and attn_indexes for all queries"):
         attn_scores, attn_indexes = index.search(queries, TOP_K)
 
+    attn_indexes[attn_indexes == -1] = 0
     with TimeIt("getting top_k Q.K_t using faiss"):
         curr_attention = torch.full((SEQ_LEN, SEQ_LEN), float('-inf')).cuda()
         curr_attention.scatter_(-1, attn_indexes, attn_scores)
