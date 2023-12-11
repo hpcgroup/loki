@@ -14,7 +14,7 @@ TOP_K = 30
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
 
 # Index (one of GpuIndexFlatIP|GpuIndexIVFFlat|GpuIndexIVFPQ)
-INDEX_TYPE = 'GpuIndexIVFFlat'
+INDEX_TYPE = 'GpuIndexFlatIP'
 NLIST = 180
 NSUBQUANTIZER = 16
 NBITS_PER_QUANTIZER = 8  #GPU version only support this value :shrug:

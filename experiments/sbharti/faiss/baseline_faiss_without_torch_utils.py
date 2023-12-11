@@ -40,7 +40,10 @@ def get_index(index_type, vector_size):
     index = None
     if index_type == 'IndexFlatIP':
         index = faiss.IndexFlatIP(vector_size)
+    t1 = time.perf_counter()
     gpu_index = faiss.index_cpu_to_gpu(STANDARD_GPU_RESOURCE, 0, index)
+    t2 = time.perf_counter()
+    print(f"Converting index to gpu took {t2-t1:.4f} seconds")
     return gpu_index
 
 
@@ -88,7 +91,7 @@ def run(index_type):
 
         attn_scores_1, attn_indexes_1 = index.search(scoped_query.cpu(), TOP_K)
         attn_scores_1 = torch.from_numpy(attn_scores_1).cuda()
-        attn_indexes_2 = torch.from_numpy(attn_indexes_2).cuda()
+        attn_indexes_1 = torch.from_numpy(attn_indexes_1).cuda()
         set_index_faiss = set()
         print_tensor_1 = torch.cat((attn_indexes_1.transpose(0, 1), attn_scores_1.transpose(0, 1)), -1)
         print("exact_index, exact_score, faiss_index, faiss_score")
