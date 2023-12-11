@@ -70,7 +70,7 @@ def run(index_type):
         index.add(keys.cpu())
 
     with TimeIt("getting attn_scores and attn_indexes for all queries"):
-        attn_scores, attn_indexes = index.search(queries.cpu(), TOP_K)
+        attn_scores, attn_indexes = index.search(queries.cpu(), TOP_K, params=faiss.SearchParametersIVF(nprobe=4))
         attn_scores = torch.from_numpy(attn_scores).cuda()
         attn_indexes = torch.from_numpy(attn_indexes).cuda()
 
@@ -92,7 +92,7 @@ def run(index_type):
             _idx = int(idx.cpu().numpy())
             set_index_exact.add(_idx)
 
-        attn_scores_1, attn_indexes_1 = index.search(scoped_query.cpu(), TOP_K)
+        attn_scores_1, attn_indexes_1 = index.search(scoped_query.cpu(), TOP_K, params=faiss.SearchParametersIVF(nprobe=4))
         attn_scores_1 = torch.from_numpy(attn_scores_1).cuda()
         attn_indexes_1 = torch.from_numpy(attn_indexes_1).cuda()
         set_index_faiss = set()
