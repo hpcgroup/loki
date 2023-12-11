@@ -68,7 +68,8 @@ def run(index_type):
         print("Exact result is:")
         print(print_tensor)
         for idx in indices[0]:
-            set_index_exact.add(idx.cpu().numpy())
+            _idx = int(idx.cpu().numpy())
+            set_index_exact.add(_idx)
 
         attn_scores_1, attn_indexes_1 = index.search(scoped_query, TOP_K)
         set_index_faiss = set()
@@ -76,8 +77,8 @@ def run(index_type):
         print("Faiss result is:")
         print(print_tensor_1)
         for idx in attn_indexes_1[0]:
-            print(idx.cpu())
-            #set_index_faiss.add(idx.cpu().numpy())
+            _idx = int(idx.cpu().numpy())
+            set_index_faiss.add(_idx)
         print("set_index_faiss - set_index_exact: ", set_index_faiss - set_index_exact)
         print("set_index_exact - set_index_faiss: ", set_index_exact - set_index_faiss)
 
