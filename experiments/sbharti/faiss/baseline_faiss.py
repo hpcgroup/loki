@@ -46,6 +46,7 @@ def run(index_type):
     print("keys: ", keys.shape)
     print("queries: ", keys.shape)
 
+    t1 = time.perf_counter()
     with TimeIt("creating index"):
         index = get_index(index_type, DIMENTION)
 
@@ -59,6 +60,8 @@ def run(index_type):
         curr_attention = torch.full((SEQ_LEN, SEQ_LEN), float('-inf')).cuda()
         curr_attention.scatter_(-1, attn_indexes, attn_scores)
 
+    t2 = time.perf_counter()
+    print(f"Executed faiss based Q.K_t with topk in {t2-t1:.4f} seconds")
     with TimeIt("sanity check on scores and indexes (considering only first query)"):
         scoped_query = queries[0].view(1, DIMENTION)
         scoped_q_dot_k = torch.mm(scoped_query, keys.transpose(0, 1))
@@ -81,9 +84,7 @@ def run(index_type):
         print("set_index_faiss - set_index_exact: ", set_index_faiss - set_index_exact)
         print("set_index_exact - set_index_faiss: ", set_index_exact - set_index_faiss)
 
-
-
-    with TimeIt("torch.mm on keys and queries"):
+    with TimeIt("torch.mm based Q.K_t with topk"):
         q_dot_k = torch.mm(queries, keys.transpose(0, 1))
         _, torch_mm_indices = q_dot_k.topk(TOP_K, dim=-1, largest=True)
         mask = torch.full_like(q_dot_k, fill_value=float('-inf'))
