@@ -5,7 +5,7 @@ from torch import nn
 from functools import partial
 
 
-from .utils import mask_top_k_elements_3d, faiss_attention
+from .utils import mask_top_k_elements_3d, faiss_attention, faiss_attention_v2
 
 def get_top_k_forward_opt(top_k):
     def modified_forward(
@@ -64,7 +64,7 @@ def get_top_k_forward_opt(top_k):
 
         src_len = key_states.size(1)
         t1 = time.perf_counter()
-        attn_weights = faiss_attention(query_states, key_states, top_k)
+        attn_weights = faiss_attention_v2(query_states, key_states, top_k, True)
         t2 = time.perf_counter()
         #with open('./faiss_attention.txt', 'a') as file:
         #    file.write(f"{t2-t1}\n")

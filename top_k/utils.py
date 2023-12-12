@@ -3,15 +3,22 @@ import faiss.contrib.torch_utils
 import torch
 
 # Supported Types of indexes:
-# GpuIndexFlatIP
+# GpuIndexFlatIP|GpuIndexIVFFlat|GpuIndexIVFPQ
 INDEX_TYPE = 'GpuIndexFlatIP'
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
+NLIST = 180
+NSUBQUANTIZER = 16
+NBITS_PER_QUANTIZER = 8  #GPU version only support this value :shrug:
 
 
 def get_index(index_type, vector_size):
     index = None
     if index_type == 'GpuIndexFlatIP':
         index = faiss.GpuIndexFlatIP(STANDARD_GPU_RESOURCE, vector_size)
+    if index_type == 'GpuIndexIVFFlat':
+        index = faiss.GpuIndexIVFFlat(STANDARD_GPU_RESOURCE, vector_size, NLIST, faiss.METRIC_INNER_PRODUCT)
+    if index_type == 'GpuIndexIVFPQ':
+        index = faiss.GpuIndexIVFPQ(STANDARD_GPU_RESOURCE, vector_size, NLIST, NSUBQUANTIZER, NBITS_PER_QUANTIZER, faiss.METRIC_INNER_PRODUCT)
     return index
 
 
@@ -51,6 +58,30 @@ def faiss_attention(query_states, key_states, k):
         
         
         attention[head_index] = curr_attention
+    # todo(Siddhant): how to delete the entire index?
+    for _index in indexes:
+        _index.reset()
+    return attention
+
+
+def faiss_attention_v2(query_states, key_states, k, use_faiss_scores=False):
+    num_heads, seq_len, hidden_size = query_states.shape
+    topk = min(k, seq_len)
+    indexes = [get_index(INDEX_TYPE, hidden_size) for _ in range(num_heads)]
+    attention = torch.bmm(query_states, key_states.transpose(1, 2))
+
+    for head_index, index in enumerate(indexes):
+        index.add(key_states.float())
+        scoped_query = query_states[seq_len - 1].view(1, hidden_size)
+        attn_scores, attn_indexes = index.search(scoped_query, topk)
+        if use_faiss_scores:
+            curr_attention = torch.full((1, seq_len), float('-inf')).cuda()
+            curr_attention.scatter_(-1, attn_indexes, attn_scores)
+        else:
+            # todo(Siddhant): implement False case
+            pass
+
+        attention[head_index][seq_len - 1] = curr_attention
     # todo(Siddhant): how to delete the entire index?
     for _index in indexes:
         _index.reset()
