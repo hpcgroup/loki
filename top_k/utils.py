@@ -71,9 +71,10 @@ def faiss_attention_v2(query_states, key_states, k, use_faiss_scores=False):
     attention = torch.bmm(query_states, key_states.transpose(1, 2))
 
     for head_index, index in enumerate(indexes):
-        index.add(key_states.float())
-        scoped_query = query_states[seq_len - 1].view(1, hidden_size)
-        attn_scores, attn_indexes = index.search(scoped_query, topk)
+        index.add(key_states[head_index].float())
+        scoped_query = query_states[head_index][seq_len - 1].view(1, hidden_size)
+        attn_scores, attn_indexes = index.search(scoped_query.float(), topk)
+        print(torch.min(attn_indexes), attn_indexes.shape)
         if use_faiss_scores:
             curr_attention = torch.full((1, seq_len), float('-inf')).cuda()
             curr_attention.scatter_(-1, attn_indexes, attn_scores)
@@ -112,10 +113,10 @@ if __name__ == '__main__':
     topk = 2
     print(f"Assuming num_heads={num_heads}, seq_len={seq_len}, hidden_size={hidden_size}, topk={topk}")
     torch.set_printoptions(precision=10)
-    for i in range(5):
+    for i in range(1):
         query_states = torch.randn(num_heads, seq_len, hidden_size, dtype=torch.float16).cuda()
         key_states = torch.randn(num_heads, seq_len, hidden_size, dtype=torch.float16).cuda()
         print(f">>>>>>> faiss attention using {INDEX_TYPE}")
-        print(faiss_attention(query_states, key_states, topk))
+        print(faiss_attention_v2(query_states, key_states, topk, True))
         print(f">>>>>>> using old method (torch.bmm followed by masking topk)")
         print(mask_top_k_elements_3d(torch.bmm(query_states, key_states.transpose(1, 2)), 4))
