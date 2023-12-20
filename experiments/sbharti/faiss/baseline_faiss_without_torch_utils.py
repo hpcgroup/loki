@@ -8,7 +8,7 @@ torch.set_printoptions(precision=10)
 
 # Constants
 DIMENTION = 768
-SEQ_LEN = 12048
+SEQ_LEN = 2048
 TOP_K = 30
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
 
@@ -45,7 +45,7 @@ def get_index(index_type, vector_size):
         quantizer_index = faiss.IndexFlatIP(vector_size)
         index = faiss.IndexIVFFlat(quantizer_index, DIMENTION, NLIST, faiss.METRIC_INNER_PRODUCT)
     if index_type == 'IndexPQ':
-        index = faiss.IndexPQ(DIMENTION, NSUBQUANTIZER, NBITS_PER_QUANTIZER)
+        index = faiss.IndexPQ(DIMENTION, NSUBQUANTIZER, NBITS_PER_QUANTIZER, faiss.METRIC_INNER_PRODUCT)
     if index_type == 'IndexHNSWFlat':
         index = faiss.IndexHNSWFlat(DIMENTION, M_HNSW, faiss.METRIC_INNER_PRODUCT)
     t1 = time.perf_counter()
