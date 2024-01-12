@@ -1,6 +1,6 @@
 from lm_perplexity_eval import evaluate
 from top_k.modify_opt import make_attention_top_k_opt
-from top_k.modify_llama import make_attention_top_k_llama
+from top_k.modify_llama import make_attention_top_k_llama, make_attention_sparq_llama
 import argparse
 
 MODEL_TYPE_FUNC_MAP = {
@@ -22,7 +22,7 @@ if args.top_k !=-1:
     if args.model_type == "opt":
         make_attention_top_k_opt(top_k=args.top_k)
     elif args.model_type == "llama":
-        make_attention_top_k_llama(top_k=args.top_k)
+        make_attention_sparq_llama(top_k=args.top_k)
 
 ppl = evaluate(model_id=args.model_id,
             dataset="wikitext",
