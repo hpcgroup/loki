@@ -1,11 +1,11 @@
 import torch
 import math
 
-
-
-def mask_top_k_elements_sparq(attn_weights, attention_mask, query_states, key_states, r, k, l = -1):
+def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, r, k, l = -1):
     dh = key_states.shape[-1]
-    s = key_states.shape[-2]
+
+    if r == -1:
+        r = dh
 
     # Default recent history = k / 4
     if l == -1:
@@ -19,7 +19,7 @@ def mask_top_k_elements_sparq(attn_weights, attention_mask, query_states, key_st
     key_states_sparse.scatter_(-1, i1, key_states.gather(-1, i1))
 
     # Scaling factor based on the SPAR-Q paper. Edited it to work with keys
-    scaling_factor = dh * (torch.abs(key_states_hat).sum(-1 , keepdim=True) / torch.abs(key_states).sum(-1, keepdim = True))
+    scaling_factor = dh * (torch.abs(key_states_sparse).sum(-1 , keepdim=True) / torch.abs(key_states).sum(-1, keepdim = True))
 
     # Compute attention with the query_states and key_states_sparse
     s_hat = torch.matmul(query_states, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)
@@ -49,113 +49,60 @@ def mask_top_k_elements_sparq(attn_weights, attention_mask, query_states, key_st
 
     return mask, alpha
 
-def mask_top_k_elements_sparq(full_attention_scores, attention_mask, query, key, value, r, k):
+def mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, r, k, l = -1):
+    dh = key_states.shape[-1]
 
-    
-    dh = query.shape[-1]
-    l = k / 4
+    if r == -1:
+        r = dh
 
-    i1 = torch.topk(torch.abs(query), r, -1).indices
+    # Default recent history = k / 4
+    if l == -1:
+        l = k / 4
+
+    # Get the top-r absolute values of the query along the dh dimension
+    i1 = torch.topk(torch.abs(query_states), r, -1).indices
     #i1,_ = torch.sort(i1, dim=-1 )
     #print (f"I1:\n{i1}")
 
-    query_hat = torch.gather(query, -1, i1)
-    key_hat = torch.gather(key, -1, i1)
+    # Zero out all indices other than the top-r (TODO: Make this an actual sparse matrix)
+    query_states_sparse = torch.full_like(query_states, fill_value=0)
+    query_states_sparse.scatter_(-1, i1, query_states.gather(-1, i1))
 
-    #print (f"Qhat:\n{query_hat}")
-    #print (f"Khat:\n{key_hat}")
+    # Scaling factor based on the SPAR-Q paper. Edited it to work with keys
+    scaling_factor = dh * (torch.abs(query_states_sparse).sum(-1 , keepdim=True) / torch.abs(query_states).sum(-1, keepdim = True))
 
-    q_sparse = torch.full_like(query, fill_value=0)
-    q_sparse.scatter_(-1, i1, query.gather(-1, i1))
-
-    s = key.shape[2]
-
-    scaling_factor = query.shape[-1] * (torch.abs(key_hat).sum(-1 , keepdim=True) / torch.abs(key).sum(-1, keepdim = True))
-
-
-    s_hat = torch.matmul(q_sparse, key.transpose(-1, -2)) / torch.sqrt(scaling_factor)
+    # Compute attention with the query_states and key_states_sparse
+    s_hat = torch.matmul(query_states_sparse, key_states.transpose(-1, -2)) / torch.sqrt(scaling_factor)
     s_hat = s_hat + attention_mask
     #s_hat[~attention_mask] = float('-inf')
+    s_hat = torch.nn.functional.softmax(s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype)
 
-    s_hat = torch.nn.functional.softmax(s_hat, dim=-1, dtype=torch.float32).to(query.dtype)
-    #print (f"Shat:\n{s_hat}")
+    #print (f"s_hat:\n{s_hat}")
 
+    # Get the recency mask with 1s for the recent l tokens and 0 otherwise
     ones = torch.ones_like(s_hat)
     mask_recent = torch.triu(ones, diagonal=-int(l-1))
     mask_recent = torch.tril(mask_recent, diagonal=0)
 
-    s_hat = s_hat + mask_recent
-    #print (f"Shat:\n{s_hat}")
+    # Adding 1 to the recent token scores makes sure they are in the top-k
+    s_hat_recent = s_hat + mask_recent
+    #print (f"s_hat_recent:\n{s_hat}")
 
-    if (k >= key.shape[2]):
-        k = key.shape[2]
+    if (k >= key_states.shape[2]):
+        k = key_states.shape[2]
 
-    i2 = torch.topk(s_hat, k, dim=-1).indices
-    #i2,_ = torch.sort(i2, dim=-1)
+    # Get top-k keys based on the s_hat_recent score matrix
+    i2 = torch.topk(s_hat_recent, k, dim=-1).indices
 
-    s_hat = s_hat - mask_recent
+    # Based on the top-k indices, change the original attn_weights to zero out the non-top-k indices
+    mask = torch.full_like(attn_weights, fill_value=float('-inf'))
+    mask.scatter_(-1, i2, attn_weights.gather(-1, i2))
 
-    mask = torch.full_like(full_attention_scores, fill_value=float('-inf'))
-    mask.scatter_(-1, i2, full_attention_scores.gather(-1, i2))
-
+    # Caclulate alpha which is the sum of the probabilities of the top-k scores
     alpha = torch.sum(torch.gather(s_hat, -1, i2), -1, True)
+
     #print (f"Mask:\n{mask}")
     return mask, alpha
-#def mask_top_k_elements_sparq(full_attention_scores, attention_mask, query, key, value, r, k):
-#    
-#    dh = query.shape[3]
-#    l = k / 4
-#
-#    i1 = torch.topk(torch.abs(query), r, -1).indices
-#
-#    #abs_top_q_r, indices = torch.abs(query).topk(r, dim=3, largest=True)
-#    query_top_r = torch.gather(query, 3, indices)
-#
-#    s = key.shape[2]
-#
-#    scaling_factor = dh * (torch.sum(abs_top_q_r, 3, keepdim=True) / torch.sum(torch.abs(query), 3, keepdim = True))
-#
-#    key_top_r = torch.gather(key, 3, indices)
-#
-#    score_estimates = torch.matmul(query_top_r, key_top_r.transpose(2, 3)) / torch.sqrt(scaling_factor)
-#
-#    score_estimates = score_estimates + attention_mask
-#
-#    estimate_weights = torch.nn.functional.softmax(score_estimates, dim=-1, dtype=torch.float32).to(query.dtype)
-#
-#    ones = torch.ones_like(estimate_weights)
-#    zeros = torch.zeros_like(estimate_weights)
-#
-#    mask_recent = torch.triu(ones, diagonal=-int(l-1))
-#    mask_recent = torch.tril(mask_recent, diagonal=0)
-#
-#    modified_weights = estimate_weights + mask_recent
-#
-#    top_estimate_scores, topk_indices = modified_weights.topk(k, dim=3, largest=True)
-#
-#    alpha = torch.sum(torch.gather(estimate_weights, 3, topk_indices), 3, True)
-#
-#    mask = torch.full_like(full_attention_scores, fill_value=float('-inf'))
-#
-#    mask.scatter_(3, topk_indices, full_attention_scores.gather(3, topk_indices))
-#    return mask, alpha
-#    #print (mask)
-#    #print (alpha)
-#
-#    attn_weights = torch.nn.functional.softmax(mask, dim=-1, dtype=torch.float32).to(query.dtype)
-#    #print (attn_weights)
-#
-#    attn_output = torch.matmul(attn_weights, value)
-#    #print (attn_output)
-#
-#    #print (torch.mean(value, 2, True))
-#    #print (torch.mean(value, 2, True).shape)
-#
-#    #print (1-alpha)
-#    #print (torch.matmul(1-alpha, torch.mean(value, 2, True)))
-#
-
-
 
 def mask_top_k_elements_3d(tensor, k, dim=2):
     # Find the indices of the top k elements along the specified dimension
@@ -174,7 +121,7 @@ def mask_top_k_elements_3d(tensor, k, dim=2):
     return mask
 
 
-def test_sparq_mask():
+def test_spar_mask():
     q_test = torch.rand(1, 1, 5, 6)
     k_test = torch.rand(1, 1, 5, 6)
     v_test = torch.rand(1, 1, 5, 6)
@@ -192,7 +139,8 @@ def test_sparq_mask():
 
     ##print (test_tensor)
 
-    mask_top_k_elements_sparq(attention, tril_mask, q_test, k_test, v_test, 2, 2)
+    mask_elements_spar_q(attention, tril_mask, q_test, k_test, v_test, 2, 2)
+    mask_elements_spar_k(attention, tril_mask, q_test, k_test, v_test, 2, 2)
 
 def test_mask():
     test_tensor = torch.rand(1, 1, 5, 5)

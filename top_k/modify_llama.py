@@ -7,9 +7,9 @@ from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
-from .utils import mask_top_k_elements_3d, mask_top_k_elements_sparq
+from .utils import mask_top_k_elements_3d, mask_elements_spar_q, mask_elements_spar_k
 
-def get_sparq_forward(topr, topk):
+def get_spar_forward(topr, topk, use_keys = True):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -85,15 +85,20 @@ def get_sparq_forward(topr, topk):
             attn_weights = attn_weights + attention_mask
 
         # Keeping the top-k attention scores
-        attn_weights, alpha = mask_top_k_elements_sparq(attn_weights, attention_mask, query_states, key_states, value_states, topr, topk)
+        alpha = None
+        if use_keys:
+            attn_weights, alpha = mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, topr, topk)
+        else:
+            attn_weights, alpha = mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, topr, topk)
+
+        assert alpha is not None, "alpha is None"
 
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
 
-
-        #attn_output = ((1 - alpha) * torch.mean(value_states, 2, True)) + alpha * attn_output
+        attn_output = ((1 - alpha) * torch.mean(value_states, 2, True)) + alpha * attn_output
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -227,6 +232,7 @@ def get_top_k_forward(top_k):
 def make_attention_top_k_llama(top_k):
     print ("Modifying Llama Attention")
     LlamaAttention.forward = get_top_k_forward(top_k)
-def make_attention_sparq_llama(top_k):
-    print ("Modifying Llama SparQ Attention")
-    LlamaAttention.forward = get_sparq_forward(128, top_k)
+
+def make_attention_spar_llama(top_r, top_k):
+    print ("Modifying Llama Spar Attention")
+    LlamaAttention.forward = get_spar_forward(top_r, top_k, True)
