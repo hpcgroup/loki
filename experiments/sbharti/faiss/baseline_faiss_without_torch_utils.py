@@ -1,6 +1,7 @@
 import time
 
 import faiss
+import matplotlib.pyplot as plt
 import torch
 
 
@@ -9,11 +10,11 @@ torch.set_printoptions(precision=10)
 # Constants
 DIMENTION = 768
 SEQ_LEN = 2048
-TOP_K = 30
+TOP_K = 128
 STANDARD_GPU_RESOURCE = faiss.StandardGpuResources()
 
 # Index (one of IndexFlatIP|IndexIVFFlat|IndexPQ|IndexHNSWFlat)
-INDEX_TYPE = 'IndexHNSWFlat'
+INDEX_TYPE = 'IndexPQ'
 NLIST = 180
 NSUBQUANTIZER = 16
 NBITS_PER_QUANTIZER = 8
@@ -111,21 +112,50 @@ def run(index_type):
         print("set_index_faiss - set_index_exact: ", set_index_faiss - set_index_exact)
         print("set_index_exact - set_index_faiss: ", set_index_exact - set_index_faiss)
 
+    torch.cuda.synchronize()
+    t3 = time.perf_counter()
     with TimeIt("torch.mm based Q.K_t with topk"):
         q_dot_k = torch.mm(queries, keys.transpose(0, 1))
-        _, torch_mm_indices = q_dot_k.topk(TOP_K, dim=-1, largest=True)
-        mask = torch.full_like(q_dot_k, fill_value=float('-inf'))
-        mask.scatter_(-1, torch_mm_indices, q_dot_k.gather(-1, torch_mm_indices))
+        # _, torch_mm_indices = q_dot_k.topk(TOP_K, dim=-1, largest=True)
+        # mask = torch.full_like(q_dot_k, fill_value=float('-inf'))
+        # mask.scatter_(-1, torch_mm_indices, q_dot_k.gather(-1, torch_mm_indices))
+    torch.cuda.synchronize()
+    t4 = time.perf_counter()
 
-    mask[mask == float('-inf')] = float('-1e10')
-    curr_attention[curr_attention == float('-inf')] = float('-1e10')
+    # mask[mask == float('-inf')] = float('-1e10')
+    # curr_attention[curr_attention == float('-inf')] = float('-1e10')
 
-    is_close = torch.all(torch.abs(curr_attention - mask) < 0.01)
-    if is_close:
-        print("The Q.K_t from two methods are close.")
-    else:
-        print("The Q.K_t from two methods are not close.")
+    # is_close = torch.all(torch.abs(curr_attention - mask) < 0.01)
+    # if is_close:
+    #     print("The Q.K_t from two methods are close.")
+    # else:
+    #     print("The Q.K_t from two methods are not close.")
+    return (t2 - t1), (t4 - t3)
 
 
 if __name__ == '__main__':
-    run(INDEX_TYPE)
+    new_time_faiss_list = []
+    old_time_torch_list = []
+    for i in range(100):
+        new_time_faiss, old_time_torch = run(INDEX_TYPE)
+        new_time_faiss_list.append(new_time_faiss*1000)
+        old_time_torch_list.append(old_time_torch*1000)
+        print(new_time_faiss, old_time_torch)
+    new_time_faiss_list = new_time_faiss_list[15:]
+    old_time_torch_list = old_time_torch_list[15:]
+
+    plt.scatter(range(len(new_time_faiss_list)), new_time_faiss_list, color='red', marker='x', label='Faiss time per head (ms)')
+    plt.scatter(range(len(old_time_torch_list)), old_time_torch_list, color='blue', marker='o', label='PyTorch time per head (ms)')
+
+    # Add labels and title
+    plt.xlabel('Run #')
+    plt.ylabel('Time (ms)')
+    plt.title(f'Faiss Index: {INDEX_TYPE}')
+
+    # Add a legend
+    plt.legend()
+
+    # Show the plot
+    plt.savefig(f'{INDEX_TYPE}.png')
+
+
