@@ -22,12 +22,14 @@ def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states,
     scaling_factor = dh * (torch.abs(key_states_sparse).sum(-1 , keepdim=True) / torch.abs(key_states).sum(-1, keepdim = True))
 
     # Compute attention with the query_states and key_states_sparse
-    attn_wegihts_s_hat = torch.matmul(query_states, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)
-    attn_wegihts_s_hat = attn_wegihts_s_hat + attention_mask
+    attn_weights_s_hat = torch.matmul(query_states, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)
+    attn_weights_s_hat = attn_weights_s_hat + attention_mask
+    #attn_weights_s_hat[~attention_mask] =  float('-inf')
+    #test_tensor[~tril_mask] = float('-inf')
     if return_shat:
-        return attn_wegihts_s_hat, 1 
+        return attn_weights_s_hat, 1 
 
-    s_hat = torch.nn.functional.softmax(attn_wegihts_s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    s_hat = torch.nn.functional.softmax(attn_weights_s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype)
 
     # Get the recency mask with 1s for the recent l tokens and 0 otherwise
     ones = torch.ones_like(s_hat)
@@ -52,7 +54,7 @@ def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states,
 
     return mask, alpha
 
-def mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, r, k, l = -1):
+def mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, r, k, l = -1, return_shat = False):
     dh = key_states.shape[-1]
 
     if r == -1:
@@ -75,10 +77,13 @@ def mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states,
     scaling_factor = dh * (torch.abs(query_states_sparse).sum(-1 , keepdim=True) / torch.abs(query_states).sum(-1, keepdim = True))
 
     # Compute attention with the query_states and key_states_sparse
-    s_hat = torch.matmul(query_states_sparse, key_states.transpose(-1, -2)) / torch.sqrt(scaling_factor)
-    s_hat = s_hat + attention_mask
-    #s_hat[~attention_mask] = float('-inf')
-    s_hat = torch.nn.functional.softmax(s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    attn_weights_s_hat = torch.matmul(query_states_sparse, key_states.transpose(-1, -2)) / torch.sqrt(scaling_factor)
+    attn_weights_s_hat = attn_weights_s_hat + attention_mask
+    #attn_weights_s_hat[~attention_mask] =  float('-inf')
+    if return_shat:
+        return attn_weights_s_hat, 1 
+
+    s_hat = torch.nn.functional.softmax(attn_weights_s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype)
 
     #print (f"s_hat:\n{s_hat}")
 
@@ -138,12 +143,13 @@ def test_spar_mask():
     tril_mask = torch.tril(ones, diagonal=0)
     attention[~tril_mask] = float('-inf')
 
-    #print (f"FullAttention:\n{attention}")
+    print (f"FullAttention:\n{attention}")
 
     ##print (test_tensor)
 
-    mask_elements_spar_q(attention, tril_mask, q_test, k_test, v_test, 2, 2)
-    mask_elements_spar_k(attention, tril_mask, q_test, k_test, v_test, 2, 2)
+    #mask_elements_spar_q(attention, tril_mask, q_test, k_test, v_test, 2, 2)
+    spar_attn, alpha = mask_elements_spar_q(attention, tril_mask, q_test, k_test, 2, 2, -1, True)
+    print (spar_attn)
 
 def test_mask():
     test_tensor = torch.rand(1, 1, 5, 5)
@@ -157,4 +163,4 @@ def test_mask():
     #print (test_tensor)
 
 if __name__ == "__main__":
-    test_sparq_mask()
+    test_spar_mask()

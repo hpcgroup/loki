@@ -16,6 +16,7 @@ parser.add_argument("--model-type", type=str, default="opt", help="model type - 
 parser.add_argument("--sequence-length", type=int, default=2048, help="sequence length")
 parser.add_argument("--use-axonn", action='store_true', default=False, help="shard a model using AxoNN")
 parser.add_argument("--use-spar", action='store_true', default=False, help="use the Spar algos")
+parser.add_argument("--use-query", action='store_true', default=False, help="use the Spar-Q algo")
 parser.add_argument("--top-r", type=int, default=-1, help="top r tokens to consider," "set to -1 to use all tokens")
 
 args = parser.parse_args()
@@ -23,7 +24,7 @@ args = parser.parse_args()
 if args.top_k !=-1:
     if args.use_spar:
         if args.model_type == "llama":
-            make_attention_spar_llama(top_r=args.top_r, top_k=args.top_k)
+            make_attention_spar_llama(top_r=args.top_r, top_k=args.top_k, use_keys=(not args.use_query))
     else:
         if args.model_type == "opt":
             make_attention_top_k_opt(top_k=args.top_k)
