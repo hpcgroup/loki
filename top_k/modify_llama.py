@@ -87,9 +87,9 @@ def get_spar_forward(topr, topk, use_keys = True):
         # Keeping the top-k attention scores
         alpha = None
         if use_keys:
-            attn_weights, alpha = mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, topr, topk)
+            attn_weights, alpha = mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=True)
         else:
-            attn_weights, alpha = mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, topr, topk)
+            attn_weights, alpha = mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=True)
 
         assert alpha is not None, "alpha is None"
 
