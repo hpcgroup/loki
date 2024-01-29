@@ -233,6 +233,7 @@ def make_attention_top_k_llama(top_k):
     print ("Modifying Llama Attention")
     LlamaAttention.forward = get_top_k_forward(top_k)
 
-def make_attention_spar_llama(top_r, top_k):
+def make_attention_spar_llama(top_r, top_k, use_keys=True):
     print ("Modifying Llama Spar Attention")
-    LlamaAttention.forward = get_spar_forward(top_r, top_k, True)
+    print (f"Use Keys: {use_keys}")
+    LlamaAttention.forward = get_spar_forward(top_r, top_k, use_keys)
