@@ -1,7 +1,7 @@
 import torch
 import math
 
-def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, r, k, l = -1):
+def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, r, k, l = -1, return_shat = False):
     dh = key_states.shape[-1]
 
     if r == -1:
@@ -22,9 +22,12 @@ def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states,
     scaling_factor = dh * (torch.abs(key_states_sparse).sum(-1 , keepdim=True) / torch.abs(key_states).sum(-1, keepdim = True))
 
     # Compute attention with the query_states and key_states_sparse
-    s_hat = torch.matmul(query_states, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)
-    s_hat = s_hat + attention_mask
-    s_hat = torch.nn.functional.softmax(s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    attn_wegihts_s_hat = torch.matmul(query_states, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)
+    attn_wegihts_s_hat = attn_wegihts_s_hat + attention_mask
+    if return_shat:
+        return attn_wegihts_s_hat, 1 
+
+    s_hat = torch.nn.functional.softmax(attn_wegihts_s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype)
 
     # Get the recency mask with 1s for the recent l tokens and 0 otherwise
     ones = torch.ones_like(s_hat)
