@@ -7,8 +7,6 @@ from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
-from .utils import mask_top_k_elements_3d, mask_elements_spar_q, mask_elements_spar_k
-
 def get_s_hat_forward():
     def modified_forward(
         self,
