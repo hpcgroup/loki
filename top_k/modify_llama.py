@@ -86,12 +86,15 @@ def get_spar_forward(topr, topk, use_keys = True):
 
         # Keeping the top-k attention scores
         alpha = None
+        #print (f"Original attn_weights size: {attn_weights.size()}")
         if use_keys:
-            attn_weights, alpha = mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=True)
+            attn_weights, alpha = mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=False)
         else:
-            attn_weights, alpha = mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=True)
+            attn_weights, alpha = mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=False)
 
         assert alpha is not None, "alpha is None"
+
+        #print (f"New attn_weights size: {attn_weights.size()}")
 
 
         # upcast attention to fp32

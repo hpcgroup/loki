@@ -1,6 +1,17 @@
 import torch
 import math
 
+def get_top_r(t, r, dim = -1):
+    # Get the top-r absolute values of the keys along the dh dimension
+    i1 = torch.topk(torch.abs(t), r, dim).indices
+
+    # Zero out all indices other than the top-r 
+    # TODO: Make this an actual sparse matrix
+    t_sparse = torch.full_like(t, fill_value=0)
+    t_sparse.scatter_(dim, i1, t.gather(dim, i1))
+
+    return t_sparse
+
 def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, r, k, l = -1, return_shat = False):
     dh = key_states.shape[-1]
 
@@ -20,10 +31,12 @@ def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states,
 
     # Scaling factor based on the SPAR-Q paper. Edited it to work with keys
     scaling_factor = dh * (torch.abs(key_states_sparse).sum(-1 , keepdim=True) / torch.abs(key_states).sum(-1, keepdim = True))
+    scaling_factor = scaling_factor.transpose(-1, -2)
 
     # Compute attention with the query_states and key_states_sparse
     attn_weights_s_hat = torch.matmul(query_states, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)
-    attn_weights_s_hat = attn_weights_s_hat + attention_mask
+    #attn_weights_s_hat = attn_weights_s_hat + attention_mask
+
     #attn_weights_s_hat[~attention_mask] =  float('-inf')
     #test_tensor[~tril_mask] = float('-inf')
     if return_shat:
