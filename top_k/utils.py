@@ -35,7 +35,7 @@ def mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states,
 
     # Compute attention with the query_states and key_states_sparse
     attn_weights_s_hat = torch.matmul(query_states, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)
-    #attn_weights_s_hat = attn_weights_s_hat + attention_mask
+    attn_weights_s_hat = attn_weights_s_hat + attention_mask
 
     #attn_weights_s_hat[~attention_mask] =  float('-inf')
     #test_tensor[~tril_mask] = float('-inf')
