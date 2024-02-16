@@ -33,17 +33,23 @@ export HF_HOME="$SCRATCH/hf_cache"
 export TRANSFORMERS_HOME="$SCRATCH/hf_cache"
 export HF_DATASETS_CACHE="$SCRATCH/hf_cache"
 
-MODEL="meta-llama/Llama-2-13b-hf"
-MODEL_NAME="llama2_13b"
-TOPR=$1
+MODEL=$1
+MODEL_TYPE=$2
+SEQ_LEN=$3
+MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
+TOPR=$4
 
-#run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_top_k.py --sequence-length 4096 --model-id ${MODEL} --model-type llama | tee exp-perf/out_${MODEL_NAME}.out"
-#echo ${run_cmd}
-#eval ${run_cmd}
+OUT_FILE_PATH="experiments/exp-sparhat/${MODEL_NAME}"
+mkdir -p $OUT_FILE_PATH
 
-for TOPK in 64 128
-do
-	run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_top_k.py --sequence-length 4096 --top-k ${TOPK} --top-r ${TOPR} --model-id ${MODEL} --model-type llama --use-axonn --use-spar | tee exp-spar/out_${MODEL_NAME}_${TOPR}_${TOPK}.out 2>&1"
-	echo ${run_cmd}
-	eval ${run_cmd}
-done
+
+echo "Model: ${MODEL}"
+echo "Model Name: ${MODEL_NAME}"
+echo "Sequence Length: ${SEQ_LEN}"
+echo "Output Path: ${OUT_FILE_PATH}"
+echo "Running model ${MODEL} with top-r channels ${TOPR}"
+
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_opt_top_k.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-axonn --use-spar-hat --top-r ${TOPR} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}.out 2>&1"
+
+echo ${run_cmd}
+eval ${run_cmd}

@@ -33,11 +33,23 @@ export HF_HOME="$SCRATCH/hf_cache"
 export TRANSFORMERS_HOME="$SCRATCH/hf_cache"
 export HF_DATASETS_CACHE="$SCRATCH/hf_cache"
 
-MODEL="huggyllama/llama-65b"
-MODEL_TYPE="llama"
-TOPK=$1
+MODEL=$1
+MODEL_TYPE=$2
+SEQ_LEN=$3
+MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
+TOPK=$4
 
-run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_opt_top_k.py --sequence-length 2048 --model-id ${MODEL} --model-type llama --use-axonn --use-topk --top-k ${TOPK} | tee out_llama_65b_${TOPK}.out"
+OUT_FILE_PATH="experiments/exp-topk/${MODEL_NAME}"
+mkdir -p $OUT_FILE_PATH
+
+echo "Model: ${MODEL}"
+echo "Model Name: ${MODEL_NAME}"
+echo "Sequence Length: ${SEQ_LEN}"
+echo "Output Path: ${OUT_FILE_PATH}"
+echo "Running model ${MODEL} with top-k ${TOPK}"
+
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_opt_top_k.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-axonn --use-topk --top-k ${TOPK} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPK}.out 2>&1"
+
 
 echo ${run_cmd}
 eval ${run_cmd}

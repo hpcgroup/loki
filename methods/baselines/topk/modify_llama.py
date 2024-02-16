@@ -8,7 +8,7 @@ from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
-from .utils import mask_attn_top_k
+from methods.common.utils import mask_attn_top_k
 
 def get_top_k_forward(top_k):
     def modified_forward(

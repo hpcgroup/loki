@@ -2,18 +2,24 @@ from typing import List, Optional, Tuple, Union
 import math
 import warnings
 from transformers.models.llama.modeling_llama import LlamaAttention, repeat_kv, apply_rotary_pos_emb
+from transformers.cache_utils import Cache
 import torch
 from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
-from .utils import mask_elements_spar_q, mask_elements_spar_k
+from methods.common.utils import mask_attn_top_k
 
-def get_spar_forward(topr, topk, use_keys = True):
-        self, hidden_states: torch.Tensor,
+base_tensor_file_path = "/pscratch/sd/p/prajwal/InferenceData/tensor_iteration_{}_{}.pt"
+iteration_count = 0
+
+def get_s_hat_forward():
+    def modified_forward(
+        self,
+        hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        past_key_value: Optional[Cache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         **kwargs,
@@ -22,6 +28,8 @@ def get_spar_forward(topr, topk, use_keys = True):
             warnings.warn(
                 "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
             )
+
+        global iteration_count
 
         bsz, q_len, _ = hidden_states.size()
 
@@ -53,21 +61,28 @@ def get_spar_forward(topr, topk, use_keys = True):
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len += past_key_value[0].shape[-2]
+            if self.layer_idx is None:
+                raise ValueError(
+                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
+                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
+                    "with a layer index."
+                )
+            kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            # reuse k, v, self_attention
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
-
-        past_key_value = (key_states, value_states) if use_cache else None
+            cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
+            key_states, key_scaling_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
+        key_scaling_states = repeat_kv(key_scaling_states, self.num_key_value_groups)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+        scaling_factor = self.head_dim * (torch.abs(key_states).sum(-1, keepdim=True) / key_scaling_states)
+        scaling_factor = scaling_factor.transpose(-1, -2)
+
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / torch.sqrt(scaling_factor)
 
         if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
             raise ValueError(
@@ -81,25 +96,12 @@ def get_spar_forward(topr, topk, use_keys = True):
                     f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                 )
             attn_weights = attn_weights + attention_mask
-
-        # Keeping the top-k attention scores
-        alpha = None
-        #print (f"Original attn_weights size: {attn_weights.size()}")
-        if use_keys:
-            attn_weights, alpha = mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=False)
-        else:
-            attn_weights, alpha = mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=False)
-
-        assert alpha is not None, "alpha is None"
-
-        #print (f"New attn_weights size: {attn_weights.size()}")
-
+        
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
-
-        attn_output = ((1 - alpha) * torch.mean(value_states, 2, True)) + alpha * attn_output
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -124,7 +126,7 @@ def get_spar_forward(topr, topk, use_keys = True):
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_attention_spar_llama(top_r, top_k, use_keys=True):
-    print ("Modifying Llama Spar Attention")
-    print (f"Use Keys: {use_keys}")
-    LlamaAttention.forward = get_spar_forward(top_r, top_k, use_keys)
+def make_llama_attention_sparhat():
+    print ("Modifying Llama Attention -> SparHat Attention")
+    LlamaAttention.forward = get_s_hat_forward()
+

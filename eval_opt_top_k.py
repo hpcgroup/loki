@@ -1,6 +1,6 @@
 from lm_perplexity_eval import evaluate
-from opt_top_k import make_llama_attention_h2o, make_llama_attention_top_k
-from opt_top_k.cache_utils import SparHatCache
+from methods import make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparhat
+from methods import SparHatCache
 import argparse
 
 
@@ -30,9 +30,9 @@ TOPK_TYPE_FUNC_MAP = {
   'llama' : make_llama_attention_top_k
 }
 
-#SPARHAT_TYPE_FUNC_MAP = {
-#  'llama' : make_llama_attention_s_hat 
-#}
+SPARHAT_TYPE_FUNC_MAP = {
+  'llama' : make_llama_attention_sparhat
+}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -52,9 +52,8 @@ if __name__ == "__main__":
     elif args.use_h2o:
         H2O_TYPE_FUNC_MAP[args.model_type](args.heavy_ratio)
     elif args.use_spar_hat:
-        raise NotImplementedError
-        #SPARHAT_TYPE_FUNC_MAP[args.model_type](args.top_r)
-        #cache = SparHatCache(args.top_r)
+        SPARHAT_TYPE_FUNC_MAP[args.model_type]()
+        cache = SparHatCache(args.top_r)
 
     ppl = evaluate(model_id=args.model_id,
                 dataset="wikitext",
