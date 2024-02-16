@@ -33,15 +33,24 @@ export HF_HOME="$SCRATCH/hf_cache"
 export TRANSFORMERS_HOME="$SCRATCH/hf_cache"
 export HF_DATASETS_CACHE="$SCRATCH/hf_cache"
 
-MODEL="meta-llama/Llama-2-13b-hf"
-MODEL_NAME="llama2_13b"
+MODEL=$1
+MODEL_TYPE=$2
+SEQ_LEN=$3
+MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
+TOPR=$4
+TOPK=$5
 
-for TOPR in 16 32 64
-do
-	for TOPK in 128
-	do
-		run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_top_k.py --sequence-length 4096 --top-k ${TOPK} --top-r ${TOPR} --model-id ${MODEL} --model-type llama --use-axonn --use-spar --use-query | tee exp-spar/out_Q_${MODEL_NAME}_${TOPR}_${TOPK}.out"
-		echo ${run_cmd}
-		eval ${run_cmd}
-	done
-done
+OUT_FILE_PATH="experiments/exp-sparq/${MODEL_NAME}"
+mkdir -p $OUT_FILE_PATH
+
+
+echo "Model: ${MODEL}"
+echo "Model Name: ${MODEL_NAME}"
+echo "Sequence Length: ${SEQ_LEN}"
+echo "Output Path: ${OUT_FILE_PATH}"
+echo "Running model ${MODEL} with top-r channels ${TOPR} and ${TOPK} tokens"
+
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_ppl.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-axonn --use-sparq --top-r ${TOPR} --top-k ${TOPK} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}_${TOPK}.out 2>&1"
+
+echo ${run_cmd}
+eval ${run_cmd}

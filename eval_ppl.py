@@ -1,5 +1,7 @@
 from lm_perplexity_eval import evaluate
-from methods import make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparhat
+from methods import (
+  make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparq, make_llama_attention_spark, make_llama_attention_sparhat
+)
 from methods import SparHatCache
 import argparse
 
@@ -16,10 +18,10 @@ def get_topk_args(parser):
     return parser
 
 def get_spar_args(parser):
-    parser.add_argument("--use-spar", action='store_true', default=False, help="use the Spar algos")
+    parser.add_argument("--use-sparq", action='store_true', default=False, help="use the Spar algos")
+    parser.add_argument("--use-spark", action='store_true', default=False, help="use the Spar algos")
     parser.add_argument("--use-spar-hat", action='store_true', default=False, help="use the Spar Hat algo")
     parser.add_argument("--top-r", type=int, default=-1, help="top r channels to consider," "set to -1 to use all channels")
-    parser.add_argument("--use-spar-keys", action='store_true', default=False, help="use the Spar-Q algo")
     return parser
 
 H2O_TYPE_FUNC_MAP = {
@@ -28,6 +30,14 @@ H2O_TYPE_FUNC_MAP = {
 
 TOPK_TYPE_FUNC_MAP = {
   'llama' : make_llama_attention_top_k
+}
+
+SPARQ_TYPE_FUNC_MAP = {
+  'llama' : make_llama_attention_sparq
+}
+
+SPARK_TYPE_FUNC_MAP = {
+  'llama' : make_llama_attention_spark
 }
 
 SPARHAT_TYPE_FUNC_MAP = {
@@ -51,6 +61,10 @@ if __name__ == "__main__":
         TOPK_TYPE_FUNC_MAP[args.model_type](args.top_k)
     elif args.use_h2o:
         H2O_TYPE_FUNC_MAP[args.model_type](args.heavy_ratio)
+    elif args.use_sparq:
+        SPARQ_TYPE_FUNC_MAP[args.model_type](args.top_r, args.top_k)
+    elif args.use_spark:
+        SPARK_TYPE_FUNC_MAP[args.model_type](args.top_r, args.top_k)
     elif args.use_spar_hat:
         SPARHAT_TYPE_FUNC_MAP[args.model_type]()
         cache = SparHatCache(args.top_r)

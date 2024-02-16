@@ -1,19 +1,23 @@
+
 from typing import List, Optional, Tuple, Union
 import math
 import warnings
 from transformers.models.llama.modeling_llama import LlamaAttention, repeat_kv, apply_rotary_pos_emb
+from transformers.cache_utils import Cache
 import torch
 from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
-from .utils import mask_elements_spar_q, mask_elements_spar_k
+from .utils import mask_attn_spark
 
-def get_spar_forward(topr, topk, use_keys = True):
-        self, hidden_states: torch.Tensor,
+def get_spark_forward(top_r, top_k):
+    def modified_forward(
+        self,
+        hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        past_key_value: Optional[Cache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         **kwargs,
@@ -53,16 +57,19 @@ def get_spar_forward(topr, topk, use_keys = True):
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len += past_key_value[0].shape[-2]
+            if self.layer_idx is None:
+                raise ValueError(
+                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
+                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
+                    "with a layer index."
+                )
+            kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
-            # reuse k, v, self_attention
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
-
-        past_key_value = (key_states, value_states) if use_cache else None
+            cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -82,21 +89,15 @@ def get_spar_forward(topr, topk, use_keys = True):
                 )
             attn_weights = attn_weights + attention_mask
 
-        # Keeping the top-k attention scores
-        alpha = None
-        #print (f"Original attn_weights size: {attn_weights.size()}")
-        if use_keys:
-            attn_weights, alpha = mask_elements_spar_k(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=False)
-        else:
-            attn_weights, alpha = mask_elements_spar_q(attn_weights, attention_mask, query_states, key_states, topr, topk, return_shat=False)
+        # Get spar-q attention weights and alpha
+        # TODO: Optimise this so that we don't compute attention twice
+        attn_weights, alpha = mask_attn_spark(attn_weights, attention_mask, query_states, key_states, top_r, top_k)
 
         assert alpha is not None, "alpha is None"
 
-        #print (f"New attn_weights size: {attn_weights.size()}")
-
-
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
         attn_output = ((1 - alpha) * torch.mean(value_states, 2, True)) + alpha * attn_output
@@ -124,7 +125,7 @@ def get_spar_forward(topr, topk, use_keys = True):
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_attention_spar_llama(top_r, top_k, use_keys=True):
-    print ("Modifying Llama Spar Attention")
-    print (f"Use Keys: {use_keys}")
-    LlamaAttention.forward = get_spar_forward(top_r, top_k, use_keys)
+def make_llama_attention_spark(top_r, top_k):
+    print ("Modifying Llama Attention -> SparK Attention")
+    print (f"TopR: {top_r}, TopK: {top_k}")
+    LlamaAttention.forward = get_spark_forward(top_r, top_k)
