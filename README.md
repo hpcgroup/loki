@@ -6,24 +6,20 @@ Follow the instructions in their readme.
 
 ## Usage
 
-Say you want to only consider the top 128 tokens for opt-350m.
+Say you want to find the perplexity for H2O on a llama-2-7b model
 
 ```
-python eval_top_k.py --top-k 128 --model-id facebook/opt-350m
+python -u eval_ppl.py --sequence-length 4096 --model-id meta-llama/Llama-2-7b-hf --model-type llama --use-h2o --heavy-ratio 0.1
 ```
-
-To get the original perplexity you can set `--top-k -1`. This will bypass the top-k changes
-
 
 ### With AxoNN's tensor parallelism
 
-Additionally, you can add `--use-axonn` flag to shard a large model like opt-13b over multiple GPUs.
+Additionally, you can add `--use-axonn` flag to shard a large model like llama-13b over multiple GPUs.
 For this you will need to launch the code using mpirun
 
 
 ```
-mpirun -np 2 python eval_top_k.py --top-k 128 --model-id facebook/opt-13b --use-axonn
-
+mpirun -np 2 python -u eval_ppl.py --sequence-length 4096 --model-id meta-llama/Llama-2-13b-hf --model-type llama --use-h2o --heavy-ratio 0.1 --use-axonn
 ```
 
 
