@@ -1,4 +1,7 @@
 from .baselines.h2o.modify_llama import make_llama_attention_h2o as make_llama_attention_h2o
 from .baselines.topk.modify_llama import make_llama_attention_top_k as make_llama_attention_top_k
+from .baselines.sparq.modify_llama import make_llama_attention_sparq as make_llama_attention_sparq
+
+from .spark.modify_llama import make_llama_attention_spark as make_llama_attention_spark
 from .sparhat.modify_llama import make_llama_attention_sparhat as make_llama_attention_sparhat
-from .sparhat.cache_utils import SparHatCache
+from .sparhat.cache_utils import SparHatCache as SparHatCache

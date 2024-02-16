@@ -48,7 +48,7 @@ echo "Sequence Length: ${SEQ_LEN}"
 echo "Output Path: ${OUT_FILE_PATH}"
 echo "Running model ${MODEL} with top-k ${TOPK}"
 
-run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_opt_top_k.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-axonn --use-topk --top-k ${TOPK} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPK}.out 2>&1"
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_ppl.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-axonn --use-topk --top-k ${TOPK} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPK}.out 2>&1"
 
 
 echo ${run_cmd}
