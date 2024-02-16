@@ -1,2 +1,0 @@
-from .h2o.modify_llama import make_llama_attention_h2o as make_llama_attention_h2o
-from .topk.modify_llama import make_llama_attention_top_k as make_llama_attention_top_k

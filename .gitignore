@@ -1,0 +1,4 @@
+experiments/**
+outfiles/**
+text_generation/
+**/__pycache__/

@@ -33,11 +33,22 @@ export HF_HOME="$SCRATCH/hf_cache"
 export TRANSFORMERS_HOME="$SCRATCH/hf_cache"
 export HF_DATASETS_CACHE="$SCRATCH/hf_cache"
 
-MODEL="meta-llama/Llama-2-7b-hf"
-MODEL_NAME="llama_13b"
-R=$1
+MODEL=$1
+MODEL_TYPE=$2
+SEQ_LEN=$3
+MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
+R=$4
 
-run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_opt_top_k.py --sequence-length 2048 --model-id ${MODEL} --model-type llama --use-axonn --use-h2o --heavy-ratio ${R} | tee experiments/exp-h2o/out_${MODEL_NAME}_${R}.out 2>&1"
+OUT_FILE_PATH="experiments/exp-h2o/${MODEL_NAME}"
+mkdir -p $OUT_FILE_PATH
+
+echo "Model: ${MODEL}"
+echo "Model Name: ${MODEL_NAME}"
+echo "Sequence Length: ${SEQ_LEN}"
+echo "Output Path: ${OUT_FILE_PATH}"
+echo "Running model ${MODEL} with heavy ratio ${R}"
+
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_opt_top_k.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-axonn --use-h2o --heavy-ratio ${R} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${R}.out 2>&1"
 
 echo ${run_cmd}
 eval ${run_cmd}
