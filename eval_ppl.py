@@ -1,6 +1,9 @@
 from lm_perplexity_eval import evaluate
+import methods
+#from methods import init_tensor_saver
 from methods import (
-  make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparq, make_llama_attention_spark, make_llama_attention_sparhat
+  make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparq, make_llama_attention_spark, make_llama_attention_sparhat, make_llama_attention_histh2o,
+  make_opt_attention_h2o, make_opt_attention_top_k
 )
 from methods import SparHatCache
 import argparse
@@ -25,11 +28,13 @@ def get_spar_args(parser):
     return parser
 
 H2O_TYPE_FUNC_MAP = {
-  'llama' : make_llama_attention_h2o
+  'llama' : make_llama_attention_histh2o,
+  'opt' : make_opt_attention_h2o
 }
 
 TOPK_TYPE_FUNC_MAP = {
-  'llama' : make_llama_attention_top_k
+  'llama' : make_llama_attention_top_k,
+  'opt' : make_opt_attention_top_k
 }
 
 SPARQ_TYPE_FUNC_MAP = {
@@ -50,11 +55,16 @@ if __name__ == "__main__":
     parser.add_argument("--model-type", type=str, default="opt", help="model type - opt, llama, gpt-neo")
     parser.add_argument("--sequence-length", type=int, default=4096, help="sequence length")
     parser.add_argument("--use-axonn", action='store_true', default=False, help="shard a model using AxoNN")
+    #parser.add_argument("--save-tensors", action='store_true', default=False, help="save tensors to disk")
+    #parser.add_argument("--output-dir", type=str, default="output", help="output directory for saving tensors")
 
     parser = get_h2o_args(parser)
     parser = get_topk_args(parser)
     parser = get_spar_args(parser)
     args = parser.parse_args()
+
+    #if args.save_tensors:
+    #    init_tensor_saver(args.output_dir)
 
     cache = None
     if args.use_topk:
@@ -67,6 +77,7 @@ if __name__ == "__main__":
         SPARK_TYPE_FUNC_MAP[args.model_type](args.top_r, args.top_k)
     elif args.use_spar_hat:
         SPARHAT_TYPE_FUNC_MAP[args.model_type]()
+        #SPARHAT_TYPE_FUNC_MAP[args.model_type](args.top_k)
         cache = SparHatCache(args.top_r)
 
     ppl = evaluate(model_id=args.model_id,

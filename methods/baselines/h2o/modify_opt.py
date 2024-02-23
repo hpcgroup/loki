@@ -1,15 +1,17 @@
-# TODO:  Update the forward to the latest HuggingFace version. Outdated till then.
-
 from typing import List, Optional, Tuple, Union
-from transformers.models.opt.modeling_opt import OPTAttention
+import math
+import warnings
+from transformers.cache_utils import Cache
 import torch
 from torch import nn
+import torch.nn.functional as F
 from functools import partial
+from transformers.models.opt.modeling_opt import OPTAttention
 
-from .utils import mask_attn_top_k
 
+from .external.h2o_utils import local_heavy_hitter_mask
 
-def get_top_k_forward(top_k):
+def get_h2o_forward(heavy_ratio):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -20,6 +22,7 @@ def get_top_k_forward(top_k):
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
+
         # if key_value_states are provided this layer is used as a cross-attention layer
         # for the decoder
         is_cross_attention = key_value_states is not None
@@ -72,18 +75,37 @@ def get_top_k_forward(top_k):
                 f" {attn_weights.size()}"
             )
 
+        attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
+
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, tgt_len, src_len):
                 raise ValueError(
                     f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}"
                 )
-            attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
             attn_weights = torch.max(
                 attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min, device=attn_weights.device)
             )
-            attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+        
+        ### Heavy + Recent
+        heavy_budget = int(heavy_ratio * attn_weights.shape[-1])
+        recent_budget = int(heavy_ratio * attn_weights.shape[-1])
 
-        attn_weights = mask_attn_top_k(attn_weights, k=top_k)
+        # Heavy Hitter Mask
+        if heavy_budget > 0:
+            mask_bottom = local_heavy_hitter_mask(attn_weights, heavy_budget) # Default: No padding applied to input
+        else:
+            mask_bottom = torch.zeros_like(attn_weights, dtype=torch.bool)
+
+        ones = torch.ones_like(attn_weights, dtype=torch.bool)
+        ones = torch.triu(ones, diagonal=-recent_budget)
+        mask_bottom = torch.logical_or(mask_bottom, ones)
+
+        mask_bottom = torch.tril(mask_bottom, diagonal=0)
+
+        # mask_bottom = ones
+        attn_weights[~mask_bottom] = torch.min(attention_mask)
+
+        attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
         if attn_weights.dtype == torch.float16:
@@ -133,6 +155,8 @@ def get_top_k_forward(top_k):
     return modified_forward
 
 
-def make_llama_attention_top_k(top_k):
-    print ("Modifying OPT Attention -> TopK Attention")
-    OPTAttention.forward = get_top_k_forward(top_k)
+def make_opt_attention_h2o(hr):
+    #TODO: Maybe we should not use fractions here to be consistent with other methods
+    print ("Modifying OPT Attention -> H2O")
+    print (f"Heavy and Recent Ratio:{hr}")
+    OPTAttention.forward = get_h2o_forward(hr)
