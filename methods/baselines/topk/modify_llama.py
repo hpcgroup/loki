@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from functools import partial
 
 from methods.common.utils import mask_attn_top_k
+import methods
 
 def get_top_k_forward(top_k, use_percentage=False):
     def modified_forward(
@@ -99,6 +100,9 @@ def get_top_k_forward(top_k, use_percentage=False):
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
+
+        #if methods.tensor_saver is not None:
+        #    methods.tensor_saver.save("attn_score", attn_weights, self.layer_idx)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
