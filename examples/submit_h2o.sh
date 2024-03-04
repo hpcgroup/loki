@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --qos=regular
-#SBATCH --constraint=gpu
+#SBATCH --constraint=gpu&hbm80g
 #SBATCH -N 1
 #SBATCH --gpus-per-node=4
 #SBATCH --account=m4641_g
 #SBATCH --ntasks-per-node=4
-#SBATCH --time=02:00:00
+#SBATCH --time=03:00:00
 
 
 # Runs a "10B" parameter model

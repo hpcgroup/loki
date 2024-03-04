@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from functools import partial
 
-from .utils import mask_attn_top_k
+from methods.common.utils import mask_attn_top_k
 
 
 def get_top_k_forward(top_k):
@@ -133,6 +133,6 @@ def get_top_k_forward(top_k):
     return modified_forward
 
 
-def make_llama_attention_top_k(top_k):
+def make_opt_attention_top_k(top_k):
     print ("Modifying OPT Attention -> TopK Attention")
     OPTAttention.forward = get_top_k_forward(top_k)
