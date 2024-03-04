@@ -1,7 +1,12 @@
 #!/bin/bash
 #SBATCH --qos=regular
+<<<<<<< Updated upstream:examples/submit_h2o.sh
 #SBATCH --constraint=gpu&hbm80g
 #SBATCH -N 1
+=======
+#SBATCH --constraint=gpu
+#SBATCH -N 2
+>>>>>>> Stashed changes:examples/submit_llama_h2o.sh
 #SBATCH --gpus-per-node=4
 #SBATCH --account=m4641_g
 #SBATCH --ntasks-per-node=4

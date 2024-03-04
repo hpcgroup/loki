@@ -101,6 +101,10 @@ def get_top_k_forward(top_k, use_percentage=False):
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
+        if methods.G_TENSOR_SAVER is not None:
+            #methods.G_TENSOR_SAVER.save("attn_score", attn_weights, self.layer_idx)
+            methods.G_TENSOR_SAVER.save("keys", key_states, self.layer_idx)
+
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
                 f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"

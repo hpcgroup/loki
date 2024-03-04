@@ -1,4 +1,5 @@
 from lm_perplexity_eval import evaluate
+from methods import init_tensor_saver
 import methods
 from methods import (
   make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparq, make_llama_attention_spark, make_llama_attention_sparhat, 
@@ -26,6 +27,11 @@ def get_spar_args(parser):
     parser.add_argument("--use-spark", action='store_true', default=False, help="use the Spar algos")
     parser.add_argument("--use-spar-hat", action='store_true', default=False, help="use the Spar Hat algo")
     parser.add_argument("--top-r", type=int, default=-1, help="top r channels to consider," "set to -1 to use all channels")
+    return parser
+
+def get_save_tensor_args(parser):
+    parser.add_argument("--save-tensors", action='store_true', default=False, help="save tensor to file")
+    parser.add_argument("--tensors-dir", type=str, default="./", help="file to save tensor to")
     return parser
 
 H2O_TYPE_FUNC_MAP = {
@@ -62,7 +68,11 @@ if __name__ == "__main__":
     parser = get_h2o_args(parser)
     parser = get_topk_args(parser)
     parser = get_spar_args(parser)
+    parser = get_save_tensor_args(parser)
     args = parser.parse_args()
+
+    if args.save_tensors:
+        init_tensor_saver(args.tensors_dir)
 
     cache = None
     if args.use_topk:

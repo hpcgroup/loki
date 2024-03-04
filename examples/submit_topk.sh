@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --qos=debug
+#SBATCH --qos=regular
 #SBATCH --constraint=gpu&hbm80g
 #SBATCH -N 1
 #SBATCH --gpus-per-node=4
-#SBATCH --account=m2404_g
+#SBATCH --account=m4641_g
 #SBATCH --ntasks-per-node=4
-#SBATCH --time=00:30:00
+#SBATCH --time=04:00:00
 
 
 # Runs a "10B" parameter model
@@ -42,13 +42,19 @@ TOPK=$4
 OUT_FILE_PATH="experiments/exp-topk/${MODEL_NAME}"
 mkdir -p $OUT_FILE_PATH
 
+OUT_TENSOR_DATA_PATH="${SCRATCH}/InferenceData/topk/${MODEL_NAME}/${TOPK}"
+mkdir -p $OUT_TENSOR_DATA_PATH
+
 echo "Model: ${MODEL}"
 echo "Model Name: ${MODEL_NAME}"
 echo "Sequence Length: ${SEQ_LEN}"
 echo "Output Path: ${OUT_FILE_PATH}"
 echo "Running model ${MODEL} with top-k ${TOPK}"
 
-run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_ppl.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-topk --top-k ${TOPK} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPK}.out 2>&1"
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_ppl.py --sequence-length ${SEQ_LEN}\
+        --model-id ${MODEL} --model-type ${MODEL_TYPE}\
+        --save-tensors --tensors-dir ${OUT_TENSOR_DATA_PATH}\
+        --use-axonn --use-topk --top-k ${TOPK} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPK}.out 2>&1"
 
 
 echo ${run_cmd}

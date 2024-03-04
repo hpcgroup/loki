@@ -13,3 +13,12 @@ from .baselines.sparq.modify_llama import make_llama_attention_sparq as make_lla
 from .spark.modify_llama import make_llama_attention_spark as make_llama_attention_spark
 from .sparhat.modify_llama import make_llama_attention_sparhat as make_llama_attention_sparhat
 from .sparhat.cache_utils import SparHatCache as SparHatCache
+from .common.saver import TensorSaver as TensorSaver
+
+G_TENSOR_SAVER = None
+
+def init_tensor_saver(tensor_dir):
+    global G_TENSOR_SAVER 
+    G_TENSOR_SAVER = TensorSaver(tensor_dir)
+
+
