@@ -13,6 +13,9 @@ from .baselines.sparq.modify_llama import make_llama_attention_sparq as make_lla
 from .spark.modify_llama import make_llama_attention_spark as make_llama_attention_spark
 from .sparhat.modify_llama import make_llama_attention_sparhat as make_llama_attention_sparhat
 from .sparhat.cache_utils import SparHatCache as SparHatCache
+
+from .pca.modify_llama import make_llama_attention_pca as make_llama_attention_pca
+
 from .common.saver import TensorSaver as TensorSaver
 
 G_TENSOR_SAVER = None

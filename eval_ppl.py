@@ -2,9 +2,9 @@ from lm_perplexity_eval import evaluate
 from methods import init_tensor_saver
 import methods
 from methods import (
-  make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparq, make_llama_attention_spark, make_llama_attention_sparhat, 
+  make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparq, make_llama_attention_spark, make_llama_attention_sparhat, make_llama_attention_pca,
   make_opt_attention_h2o, make_opt_attention_top_k,
-  make_mistral_attention_h2o, make_mistral_attention_top_k
+  make_mistral_attention_h2o, make_mistral_attention_top_k,
 )
 from methods import SparHatCache
 import argparse
@@ -34,6 +34,11 @@ def get_save_tensor_args(parser):
     parser.add_argument("--tensors-dir", type=str, default="./", help="file to save tensor to")
     return parser
 
+def get_pca_args(parser):
+    parser.add_argument("--use-pca", action='store_true', default=False, help="use the PCA algos")
+    return parser
+
+
 H2O_TYPE_FUNC_MAP = {
   'llama' : make_llama_attention_h2o,
   'opt' : make_opt_attention_h2o,
@@ -58,6 +63,10 @@ SPARHAT_TYPE_FUNC_MAP = {
   'llama' : make_llama_attention_sparhat
 }
 
+PCA_TYPE_FUNC_MAP = {
+  'llama' : make_llama_attention_pca
+}
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-id", type=str, default="facebook/opt-350m", help="huggingface model to use")
@@ -68,6 +77,7 @@ if __name__ == "__main__":
     parser = get_h2o_args(parser)
     parser = get_topk_args(parser)
     parser = get_spar_args(parser)
+    parser = get_pca_args(parser)
     parser = get_save_tensor_args(parser)
     args = parser.parse_args()
 
@@ -89,6 +99,9 @@ if __name__ == "__main__":
     elif args.use_spar_hat:
         SPARHAT_TYPE_FUNC_MAP[args.model_type]()
         cache = SparHatCache(args.top_r)
+    elif args.use_pca:
+        PCA_TYPE_FUNC_MAP[args.model_type](args.top_r)
+        args.use_axonn = False
 
     ppl = evaluate(model_id=args.model_id,
                 dataset="wikitext",
