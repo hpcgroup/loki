@@ -18,6 +18,7 @@ def get_h2o_args(parser):
 def get_topk_args(parser):
     parser.add_argument("--use-topk", action='store_true', default=False, help="use the H2O algos")
     parser.add_argument("--top-k", type=int, default=-1, help="top k tokens to consider," "set to -1 to use all tokens")
+    parser.add_argument("--top-k-perc", type=float, default=-1, help="top k tokens to consider," "set to -1 to use all tokens")
     return parser
 
 def get_spar_args(parser):
@@ -65,7 +66,10 @@ if __name__ == "__main__":
 
     cache = None
     if args.use_topk:
-        TOPK_TYPE_FUNC_MAP[args.model_type](args.top_k)
+        if args.top_k_perc == -1:
+            TOPK_TYPE_FUNC_MAP[args.model_type](args.top_k)
+        else:
+            TOPK_TYPE_FUNC_MAP[args.model_type](args.top_k_perc, use_percentage=True)
     elif args.use_h2o:
         H2O_TYPE_FUNC_MAP[args.model_type](args.heavy_ratio)
     elif args.use_sparq:
