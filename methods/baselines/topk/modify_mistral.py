@@ -12,7 +12,7 @@ from functools import partial
 from methods.common.utils import mask_attn_top_k
 import methods
 
-def get_top_k_forward(top_k):
+def get_top_k_forward(top_k, use_percentage=False):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -74,7 +74,11 @@ def get_top_k_forward(top_k):
             attn_weights = attn_weights + attention_mask
 
         # Get top-k attention weights
-        attn_weights = mask_attn_top_k(attn_weights, top_k, dim=-1)
+        if use_percentage:
+            topk = int(top_k * attn_weights.shape[-1])
+        else:
+            topk = top_k
+        attn_weights = mask_attn_top_k(attn_weights, topk, dim=-1)
         
 
         # upcast attention to fp32
@@ -99,6 +103,11 @@ def get_top_k_forward(top_k):
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_mistral_attention_top_k(top_k):
+def make_mistral_attention_top_k(top_k, use_percentage=False):
     print ("Modifying Mistral Attention -> TopK Attention")
-    MistralAttention.forward = get_top_k_forward(top_k)
+    if not use_percentage:
+        print (f"TopK - {top_k}")
+    else:
+        print (f"TopK% - {top_k}")
+
+    MistralAttention.forward = get_top_k_forward(top_k, use_percentage)

@@ -1,6 +1,8 @@
 import lm_eval
 from methods import (
-  make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparq, make_llama_attention_spark, make_llama_attention_sparhat
+  make_llama_attention_h2o, make_llama_attention_top_k, make_llama_attention_sparq, make_llama_attention_spark, make_llama_attention_sparhat, 
+  make_opt_attention_h2o, make_opt_attention_top_k,
+  make_mistral_attention_h2o, make_mistral_attention_top_k
 )
 from methods import SparHatCache
 import argparse
@@ -29,11 +31,15 @@ def get_spar_args(parser):
     return parser
 
 H2O_TYPE_FUNC_MAP = {
-  'llama' : make_llama_attention_h2o
+  'llama' : make_llama_attention_h2o,
+  'opt' : make_opt_attention_h2o,
+  'mistral' : make_mistral_attention_h2o
 }
 
 TOPK_TYPE_FUNC_MAP = {
-  'llama' : make_llama_attention_top_k
+  'llama' : make_llama_attention_top_k,
+  'opt' : make_opt_attention_top_k,
+  'mistral' : make_mistral_attention_top_k
 }
 
 SPARQ_TYPE_FUNC_MAP = {
@@ -79,7 +85,8 @@ if __name__ == "__main__":
     results = lm_eval.simple_evaluate(
         model = "hf",
         model_args=f"pretrained={args.model_id}",
-        tasks = ["copa", "rte", "openbookqa", "mathqa", "winogrande", "hellaswag"],
+        #tasks = ["copa", "rte", "openbookqa", "mathqa", "winogrande", "hellaswag"],
+        tasks = ["copa"],
         log_samples=False,
     )
 
