@@ -1,3 +1,4 @@
+import lm_eval
 from lm_perplexity_eval import evaluate
 from methods import init_tensor_saver
 import methods
@@ -8,6 +9,8 @@ from methods import (
 )
 from methods import SparHatCache
 import argparse
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def get_h2o_args(parser):
@@ -73,6 +76,7 @@ if __name__ == "__main__":
     parser.add_argument("--model-type", type=str, default="opt", help="model type - opt, llama, gpt-neo")
     parser.add_argument("--sequence-length", type=int, default=4096, help="sequence length")
     parser.add_argument("--use-axonn", action='store_true', default=False, help="shard a model using AxoNN")
+    parser.add_argument("--lm-harness-eval", action='store_true', default=False, help="use lm harness eval")
 
     parser = get_h2o_args(parser)
     parser = get_topk_args(parser)
@@ -103,11 +107,21 @@ if __name__ == "__main__":
         PCA_TYPE_FUNC_MAP[args.model_type](args.top_r)
         args.use_axonn = False
 
-    ppl = evaluate(model_id=args.model_id,
-                dataset="wikitext",
-                sequence_length=args.sequence_length,
-                use_axonn=args.use_axonn,
-                past_key_values=cache,)
+    if args.lm_harness_eval:
+        results = lm_eval.simple_evaluate(
+            model = "hf",
+            model_args=f"pretrained={args.model_id}",
+            #tasks = ["copa", "rte", "openbookqa", "mathqa", "winogrande", "hellaswag"],
+            tasks = ["openbookqa"],
+            log_samples=False,
+        )
 
+        print(results["results"])
+    else:
+        ppl = evaluate(model_id=args.model_id,
+                    dataset="wikitext",
+                    sequence_length=args.sequence_length,
+                    use_axonn=args.use_axonn,
+                    past_key_values=cache,)
 
-    print(ppl)
+        print(ppl)

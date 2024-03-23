@@ -48,9 +48,9 @@ def get_pca_init(top_r):
         self._init_rope()
 
         # Initialise PCA transforms
-        components_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-Wiki-Valid/pca_components_layer_{}.pt".format(layer_idx)
-        mean_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-Wiki-Valid/pca_means_layer_{}.pt".format(layer_idx)
-        explained_variance_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-Wiki-Valid-Full/pca_explained_variance_layer_{}.pt".format(layer_idx)
+        components_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-WV-PreR/key/pca_components_layer_{}.pt".format(layer_idx)
+        mean_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-WV-PreR/key/pca_means_layer_{}.pt".format(layer_idx)
+        explained_variance_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-WV-PreR/key/pca_explained_variance_layer_{}.pt".format(layer_idx)
 
         # PCA Components with the shape (num_heads, head_dim, top_r)
         self.pca_components = torch.load(components_file_path).to("cuda")
@@ -69,7 +69,7 @@ def get_pca_init(top_r):
         explained_variance_cumsum = self.pca_explained_variance.cumsum(-1)
 
         # Find the maximum index where the explained variance is 95% across all heads - Uncomment this line adaptively set the top_r:w
-        # top_r = (explained_variance_cumsum < 0.99).sum(-1).max().item()
+        #top_r = (explained_variance_cumsum < 0.85).sum(-1).max().item()
 
         # Instead of sum, we use the median index 
         #top_r = (explained_variance_cumsum < 0.95).sum(-1).median().item()
@@ -80,6 +80,7 @@ def get_pca_init(top_r):
         print ("{}: PCA Components Shape: {}".format(layer_idx, self.pca_components_r_key.shape))
         print ("{}: PCA Means Shape: {}".format(layer_idx, self.pca_means.shape))
         print ("Compression Ratio: {}".format(top_r / self.head_dim))
+
     return modified_attention_init
 
 
@@ -127,6 +128,14 @@ def get_pca_forward(top_r):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
+        self.pca_means = self.pca_means.to(key_states.dtype)
+        self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
+
+        # Apply PCA
+        key_states_r = torch.matmul(key_states - self.pca_means, self.pca_components_r_key)
+        # Reconstruct keys 
+        key_states = torch.matmul(key_states_r, self.pca_components_r_key.transpose(2, 3)) + self.pca_means
+
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             if self.layer_idx is None:
@@ -146,13 +155,7 @@ def get_pca_forward(top_r):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        # Apply PCA
-        key_states_r = torch.matmul(key_states - self.pca_means, self.pca_components_r_key)
-        # Reconstruct keys 
-        key_states_reconstruct = torch.matmul(key_states_r, self.pca_components_r_key.transpose(2, 3)) + self.pca_means
-
-
-        attn_weights = (torch.matmul(query_states, key_states_reconstruct.transpose(2, 3))) / math.sqrt(self.head_dim)
+        attn_weights = (torch.matmul(query_states, key_states.transpose(2, 3))) / math.sqrt(self.head_dim)
 
         if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
             raise ValueError(

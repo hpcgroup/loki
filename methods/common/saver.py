@@ -2,7 +2,7 @@ import torch
 import os
 
 CATEGORY_TO_BASEFILE = {
-  "keys" : "tensor_key_",
+  "key" : "tensor_key_",
   "query" : "tensor_query_",
   "attn_score" : "tensor_attn_score_",
   "attn_weights" : "tensor_attn_weights_",

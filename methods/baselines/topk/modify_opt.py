@@ -7,6 +7,7 @@ from torch import nn
 from functools import partial
 
 from methods.common.utils import mask_attn_top_k
+import methods
 
 
 def get_top_k_forward(top_k, use_percentage=False):
@@ -65,6 +66,9 @@ def get_top_k_forward(top_k, use_percentage=False):
 
         src_len = key_states.size(1)
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
+
+        if methods.G_TENSOR_SAVER is not None:
+            methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx)
 
         if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):
             raise ValueError(
