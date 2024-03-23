@@ -42,7 +42,7 @@ TOPK=$4
 OUT_FILE_PATH="experiments/exp-topk/${MODEL_NAME}"
 mkdir -p $OUT_FILE_PATH
 
-OUT_TENSOR_DATA_PATH="${SCRATCH}/InferenceData/topk/${MODEL_NAME}/${TOPK}"
+OUT_TENSOR_DATA_PATH="${SCRATCH}/InferenceData/topk/${MODEL_NAME}/${TOPK}/prerotary/"
 mkdir -p $OUT_TENSOR_DATA_PATH
 
 echo "Model: ${MODEL}"

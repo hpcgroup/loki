@@ -55,6 +55,9 @@ def get_top_k_forward(top_k, use_percentage=False):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
+        if methods.G_TENSOR_SAVER is not None:
+            methods.G_TENSOR_SAVER.save("keys", key_states, self.layer_idx)
+
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             if self.layer_idx is None:
@@ -101,9 +104,10 @@ def get_top_k_forward(top_k, use_percentage=False):
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
-        if methods.G_TENSOR_SAVER is not None:
-            #methods.G_TENSOR_SAVER.save("attn_score", attn_weights, self.layer_idx)
-            methods.G_TENSOR_SAVER.save("keys", key_states, self.layer_idx)
+        #if methods.G_TENSOR_SAVER is not None:
+        #    methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx)
+        #    methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx)
+
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
