@@ -8,6 +8,7 @@ from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
+from .cache_utils import SparHatCache as SparHatCache
 from methods.common.utils import mask_attn_top_k
 
 base_tensor_file_path = "/pscratch/sd/p/prajwal/InferenceData/tensor_iteration_{}_{}.pt"
@@ -126,7 +127,8 @@ def get_s_hat_forward():
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_llama_attention_sparhat():
+def make_llama_attention_sparhat(top_r):
     print ("Modifying Llama Attention -> SparHat Attention")
     LlamaAttention.forward = get_s_hat_forward()
+    return SparHatCache(top_r)
 

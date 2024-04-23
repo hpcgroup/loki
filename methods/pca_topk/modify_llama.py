@@ -9,79 +9,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from functools import partial
-import numpy as np
 
+from .utils import mask_attn_pca_topk
 import methods
 
-#def rotate_half(x):
-#    """Rotates half the hidden dims of the input."""
-#    x1 = x[..., : x.shape[-1] // 2]
-#    x2 = x[..., x.shape[-1] // 2 :]
-#    return torch.cat((-x2, x1), dim=-1)
-#
-#def rotate_other_half(x):
-#    """Rotates half the hidden dims of the input."""
-#    x1 = x[..., : x.shape[-1] // 2]
-#    x2 = x[..., x.shape[-1] // 2 :]
-#    return torch.cat((x2, x1), dim=-1)
-#
-#def apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
-#    """Applies Rotary Position Embedding to the query and key tensors.
-#
-#    Args:
-#        q (`torch.Tensor`): The query tensor.
-#        k (`torch.Tensor`): The key tensor.
-#        cos (`torch.Tensor`): The cosine part of the rotary embedding.
-#        sin (`torch.Tensor`): The sine part of the rotary embedding.
-#        position_ids (`torch.Tensor`):
-#            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
-#            used to pass offsetted position ids when working with a KV-cache.
-#        unsqueeze_dim (`int`, *optional*, defaults to 1):
-#            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
-#            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
-#            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
-#            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
-#            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
-#            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
-#    Returns:
-#        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
-#    """
-#    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-#    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
-#
-#    q_t = q.transpose(-2, -3)
-#    cost = cos.transpose(-2, -3)
-#    cost = cost.squeeze(-2)
-#    cost = cost.unsqueeze(-1) * torch.eye(128).to(cost.device)
-#
-#    sint = sin.transpose(-2, -3)
-#    sint = sint.squeeze(-2)
-#
-#    sint_1 = torch.diag_embed(sint[:,:,:64], offset=64)
-#    sint_2 = torch.diag_embed(sint[:,:,64:], offset=-64)
-#    sint = sint_1 - sint_2
-#
-#    R = cost + sint
-#    R = R.to(torch.float64)
-#
-#    Rrt = torch.matmul(R, R.transpose(-2, -1))
-#    q_t = q_t.to(torch.float64)
-#
-#    q_embed_new = torch.matmul(q_t, Rrt)
-#    q_embed_new = q_embed_new.transpose(-2, -3)
-#    q_embed_new = q_embed_new.to(q.dtype)
-#
-#    q_embed = (q * cos) + (rotate_half(q) * sin)
-#
-#    #torch.testing.assert_allclose(q_embed, q_embed_new)
-#
-#    #q_embed = (q_embed * cos) + (rotate_other_half(q_embed) * sin)
-#    
-#    #q_embed_new = (q_embed * cos) - (rotate_half(q_embed) * rotate_other_half(sin))
-#    k_embed = (k * cos) + (rotate_half(k) * sin)
-#    return q_embed, q_embed_new, k_embed, k
 
-def get_pca_init(top_r):
+
+def get_pca_init(top_r, top_k):
     def modified_attention_init(self, config: LlamaConfig, layer_idx: Optional[int] = None):
         super(LlamaAttention, self).__init__()
         self.config = config
@@ -137,7 +71,7 @@ def get_pca_init(top_r):
         explained_variance_cumsum = self.pca_explained_variance.cumsum(-1)
 
 
-        if top_r <= 1:
+        if top_r < 1:
             # Find the maximum index where the explained variance is 95% across all heads - Uncomment this line adaptively set the top_r:w
             top_correct_r = (explained_variance_cumsum < top_r).sum(-1).max().item()
 
@@ -156,8 +90,7 @@ def get_pca_init(top_r):
     return modified_attention_init
 
 
-
-def get_pca_forward(top_r):
+def get_pca_forward(top_r, top_k):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -201,14 +134,6 @@ def get_pca_forward(top_r):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        #self.pca_means = self.pca_means.to(key_states.dtype)
-        #self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
-
-        # Apply PCA
-        #key_states_r = torch.matmul(key_states - self.pca_means, self.pca_components_r_key)
-        # Reconstruct keys 
-        #key_states = torch.matmul(key_states_r, self.pca_components_r_key.transpose(2, 3)) + self.pca_means
-
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             if self.layer_idx is None:
@@ -219,7 +144,6 @@ def get_pca_forward(top_r):
                 )
             kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        #query_states, query_states_emb, key_states, key_states_emb = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         if past_key_value is not None:
@@ -229,21 +153,7 @@ def get_pca_forward(top_r):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        #self.pca_means = self.pca_means.to(key_states.dtype)
-        self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
-
-        # Apply PCA
-        key_states_r = torch.matmul(key_states, self.pca_components_r_key)
-        query_states_r = torch.matmul(query_states, self.pca_components_r_key)
-
-        # Reconstruct keys 
-        #key_states = torch.matmul(key_states_r, self.pca_components_r_key.transpose(2, 3)) + self.pca_means
-
-        attn_weights = (torch.matmul(query_states_r, key_states_r.transpose(2, 3))) / math.sqrt(self.head_dim)
-
-        #attn_weights_new = (torch.matmul(query_states_emb, key_states_emb.transpose(2, 3))) / math.sqrt(self.head_dim)
-
-        #torch.testing.assert_allclose(attn_weights, attn_weights_new)
+        attn_weights = (torch.matmul(query_states, key_states.transpose(2, 3))) / math.sqrt(self.head_dim)
 
         if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
             raise ValueError(
@@ -258,10 +168,31 @@ def get_pca_forward(top_r):
                 )
             attn_weights = attn_weights + attention_mask
 
+        self.pca_means = self.pca_means.to(key_states.dtype)
+        self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
+        self.pca_components = self.pca_components.to(key_states.dtype)
+
+        if top_k <= 1:
+            topk = int(top_k * attn_weights.shape[-1])
+        else:
+            topk = int(top_k)
+        attn_weights, alpha = mask_attn_pca_topk(self.layer_idx, attn_weights, attention_mask, query_states, key_states, self.pca_components, self.pca_components_r_key, top_r, topk)
+
+        assert alpha is not None, "alpha is None"
+
+        #print ("Alpha:", alpha.shape)
+
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
+
+        # Compute cumulative sum along the desired dimension
+        cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
+        # Compute the cumulative mean along the desired dimension
+        cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
+
+        attn_output = ((1 - alpha) * cumulative_mean) + alpha * attn_output
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -286,9 +217,9 @@ def get_pca_forward(top_r):
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_llama_attention_pca(top_r):
-    print ("Modifying Llama Attention -> PCA Attention")
+def make_llama_attention_pca_topk(top_r, top_k):
+    print ("Modifying Llama Attention -> PCA TopK Attention")
     print ("Top R:", top_r)
-    print ("Fixed TopR")
-    LlamaAttention.__init__ = get_pca_init(top_r)
-    LlamaAttention.forward = get_pca_forward(top_r)
+    print ("Top K:", top_k)
+    LlamaAttention.__init__ = get_pca_init(top_r, top_k)
+    LlamaAttention.forward = get_pca_forward(top_r, top_k)
