@@ -2,10 +2,10 @@
 #SBATCH --qos=regular
 #SBATCH --constraint=gpu&hbm80g
 #SBATCH -N 1
-#SBATCH --gpus-per-node=4
+#SBATCH --gpus-per-node=1
 #SBATCH --account=m4641_g
-#SBATCH --ntasks-per-node=4
-#SBATCH --time=04:00:00
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=00:50:00
 
 
 # Runs a "10B" parameter model
@@ -38,6 +38,7 @@ MODEL_TYPE=$2
 SEQ_LEN=$3
 MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
 TOPR=$4
+EVAL=$5
 
 OUT_FILE_PATH="experiments/exp-pca/${MODEL_NAME}"
 mkdir -p $OUT_FILE_PATH
@@ -50,7 +51,7 @@ echo "Running model ${MODEL} with PCA Attention and top-r ${TOPR}"
 
 run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_ppl.py --sequence-length ${SEQ_LEN}\
         --model-id ${MODEL} --model-type ${MODEL_TYPE}\
-        --use-pca --top-r ${TOPR} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}.out 2>&1"
+        --use-pca --top-r ${TOPR} ${EVAL}| tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}${EVAL}.out 2>&1"
 
 
 echo ${run_cmd}
