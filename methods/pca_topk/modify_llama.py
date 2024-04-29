@@ -13,82 +13,61 @@ from functools import partial
 from .utils import mask_attn_pca_topk
 import methods
 
+import os
+pca_data_path = "/global/cfs/cdirs/m4641/ApproxAttn"
+
+try:
+    from axonn import axonn as ax
+    from axonn.intra_layer import drop
+    AXONN_AVAILABLE=True
+except ImportError:
+    AXONN_AVAILABLE=False
+
+def get_pca_components(layer_idx, head_dim, top_r):
+    components_file_path = os.path.join(pca_data_path, "Llama2-7B-PCA/wikitext/postrotary/key/pca_components/pca_components_layer_{}.pt".format(layer_idx))
+    mean_file_path = os.path.join(pca_data_path, "Llama2-7B-PCA/wikitext/postrotary/key/pca_means/pca_means_layer_{}.pt".format(layer_idx))
+    explained_variance_file_path = os.path.join(pca_data_path, "Llama2-7B-PCA/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{}.pt".format(layer_idx))
+
+    # PCA Components with the shape (num_heads, head_dim, top_r)
+    pca_components = torch.load(components_file_path).to("cuda")
+
+    # PCA Means with the shape (num_heads, head_dim)
+    pca_means = torch.load(mean_file_path).to("cuda")
+
+    # Explained Variance with the shape (num_heads, head_dim)
+    pca_explained_variance = torch.load(explained_variance_file_path).to("cuda")
+
+    # Reshaping the components and taking a transpose to have components along the column dimension and means to be easily broadcastable over the keys
+    pca_components = pca_components.reshape(1, -1, head_dim, head_dim).transpose(2, 3)
+    pca_means = pca_means.reshape(1, -1, 1, head_dim)
+
+    # Get the point where the explained variance is 95% per head
+    explained_variance_cumsum = pca_explained_variance.cumsum(-1)
 
 
-def get_pca_init(top_r, top_k):
-    def modified_attention_init(self, config: LlamaConfig, layer_idx: Optional[int] = None):
-        super(LlamaAttention, self).__init__()
-        self.config = config
-        self.layer_idx = layer_idx
-        if layer_idx is None:
-            logger.warning_once(
-                f"Instantiating {self.__class__.__name__} without passing a `layer_idx` is not recommended and will "
-                "lead to errors during the forward call if caching is used. Please make sure to provide a `layer_idx` "
-                "when creating this class."
-            )
-          
-        self.attention_dropout = config.attention_dropout
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-        self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = config.rope_theta
-        self.is_causal = True
+    if top_r < 1:
+        # Find the maximum index where the explained variance is 95% across all heads - Uncomment this line adaptively set the top_r:w
+        top_correct_r = (explained_variance_cumsum < top_r).sum(-1).max().item()
 
-        if (self.head_dim * self.num_heads) != self.hidden_size:
-            raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
+    #    # Instead of sum, we use the median index 
+    #    #top_r = (explained_variance_cumsum < 0.95).sum(-1).median().item()
+    else:
+        top_correct_r = int(top_r)
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
-        self._init_rope()
+    # Only keep the top_r components of the pca_components
+    pca_components_r_key = pca_components[:, :, :, :top_correct_r]
 
-        # Initialise PCA transforms
-        components_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_components/pca_components_layer_{}.pt".format(layer_idx)
-        mean_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_means/pca_means_layer_{}.pt".format(layer_idx)
-        explained_variance_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{}.pt".format(layer_idx)
+    print ("{}: PCA Components Shape: {}".format(layer_idx, pca_components_r_key.shape))
+    print ("{}: PCA Means Shape: {}".format(layer_idx, pca_means.shape))
+    print ("Compression Ratio: {}".format(top_correct_r / head_dim))
 
-        # PCA Components with the shape (num_heads, head_dim, top_r)
-        self.pca_components = torch.load(components_file_path).to("cuda")
+    if AXONN_AVAILABLE and ax.is_initialized:
+        ## only keep pca data for the heads on the GPU
+        pca_components = drop(pca_components, transpose=True, skip_batch=True, dim=1)
+        pca_means = drop(pca_means, transpose=True, skip_batch=True, dim=1)
+        pca_components_r_key = drop(pca_components_r_key, transpose=True, skip_batch=True, dim=1)
 
-        # PCA Means with the shape (num_heads, head_dim)
-        self.pca_means = torch.load(mean_file_path).to("cuda")
-
-        # Explained Variance with the shape (num_heads, head_dim)
-        self.pca_explained_variance = torch.load(explained_variance_file_path).to("cuda")
-
-        # Reshaping the components and taking a transpose to have components along the column dimension and means to be easily broadcastable over the keys
-        self.pca_components = self.pca_components.reshape(1, self.num_heads, self.head_dim, self.head_dim).transpose(2, 3)
-        self.pca_means = self.pca_means.reshape(1, self.num_heads, 1, self.head_dim)
-
-        # Get the point where the explained variance is 95% per head
-        explained_variance_cumsum = self.pca_explained_variance.cumsum(-1)
-
-
-        if top_r < 1:
-            # Find the maximum index where the explained variance is 95% across all heads - Uncomment this line adaptively set the top_r:w
-            top_correct_r = (explained_variance_cumsum < top_r).sum(-1).max().item()
-
-        #    # Instead of sum, we use the median index 
-        #    #top_r = (explained_variance_cumsum < 0.95).sum(-1).median().item()
-        else:
-            top_correct_r = int(top_r)
-
-        # Only keep the top_r components of the pca_components
-        self.pca_components_r_key = self.pca_components[:, :, :, :top_correct_r]
-
-        print ("{}: PCA Components Shape: {}".format(layer_idx, self.pca_components_r_key.shape))
-        print ("{}: PCA Means Shape: {}".format(layer_idx, self.pca_means.shape))
-        print ("Compression Ratio: {}".format(top_correct_r / self.head_dim))
-
-    return modified_attention_init
-
+    return pca_means, pca_components, pca_components_r_key
 
 def get_pca_forward(top_r, top_k):
     def modified_forward(
@@ -106,6 +85,8 @@ def get_pca_forward(top_r, top_k):
                 "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
             )
 
+        if not hasattr(self, "pca_components"):
+            self.pca_means, self.pca_components, self.pca_components_r_key = get_pca_components(self.layer_idx, self.head_dim, top_r)
         bsz, q_len, _ = hidden_states.size()
 
         if self.config.pretraining_tp > 1:
@@ -133,18 +114,10 @@ def get_pca_forward(top_r, top_k):
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-
-        kv_seq_len = key_states.shape[-2]
-        if past_key_value is not None:
-            if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
-            kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        
+        past_key_value = getattr(self, "past_key_value", past_key_value)
+        cos, sin = self.rotary_emb(value_states, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
@@ -155,28 +128,21 @@ def get_pca_forward(top_r, top_k):
 
         attn_weights = (torch.matmul(query_states, key_states.transpose(2, 3))) / math.sqrt(self.head_dim)
 
-        if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-            raise ValueError(
-                f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                f" {attn_weights.size()}"
-            )
+        if attention_mask is not None:  # no matter the length, we just slice it
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
 
-        if attention_mask is not None:
-            if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
-                raise ValueError(
-                    f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
-                )
-            attn_weights = attn_weights + attention_mask
 
-        self.pca_means = self.pca_means.to(key_states.dtype)
-        self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
-        self.pca_components = self.pca_components.to(key_states.dtype)
+        pca_means = self.pca_means.to(key_states.dtype)
+        pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
+        pca_components = self.pca_components.to(key_states.dtype)
 
         if top_k <= 1:
             topk = int(top_k * attn_weights.shape[-1])
         else:
             topk = int(top_k)
-        attn_weights, alpha = mask_attn_pca_topk(self.layer_idx, attn_weights, attention_mask, query_states, key_states, self.pca_components, self.pca_components_r_key, top_r, topk)
+        attn_weights, alpha = mask_attn_pca_topk(self.layer_idx, attn_weights, attention_mask, query_states, key_states, pca_components, pca_components_r_key, top_r, topk)
+
 
         assert alpha is not None, "alpha is None"
 
@@ -186,6 +152,12 @@ def get_pca_forward(top_r, top_k):
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
+
+        if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
+            raise ValueError(
+                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
+                f" {attn_output.size()}"
+            )
 
         # Compute cumulative sum along the desired dimension
         cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
@@ -221,5 +193,5 @@ def make_llama_attention_pca_topk(top_r, top_k):
     print ("Modifying Llama Attention -> PCA TopK Attention")
     print ("Top R:", top_r)
     print ("Top K:", top_k)
-    LlamaAttention.__init__ = get_pca_init(top_r, top_k)
+    #LlamaAttention.__init__ = get_pca_init(top_r, top_k)
     LlamaAttention.forward = get_pca_forward(top_r, top_k)
