@@ -1,5 +1,3 @@
-import lm_eval
-from lm_perplexity_eval import evaluate
 from methods import init_tensor_saver
 from configure_model import get_h2o_args, get_topk_args, get_spar_args, get_pca_args, get_save_tensor_args
 from configure_model import get_modifier
@@ -50,6 +48,7 @@ if __name__ == "__main__":
         args.use_axonn = False
 
     if args.lm_harness_eval:
+        import lm_eval
         results = lm_eval.simple_evaluate(
             model = "hf",
             model_args=f"pretrained={args.model_id}",
@@ -60,8 +59,9 @@ if __name__ == "__main__":
 
         print(results["results"])
     else:
+        from lm_perplexity_eval import evaluate
         ppl = evaluate(model_id=args.model_id,
-                    dataset="wikitext",
+                    dataset="wikitext-test",
                     sequence_length=args.sequence_length,
                     use_axonn=args.use_axonn,
                     past_key_values=cache,)
