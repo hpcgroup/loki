@@ -45,7 +45,6 @@ if __name__ == "__main__":
         args.use_axonn = False
     elif args.use_pca_topk:
         modifier_method(args.top_r, args.top_k)
-        args.use_axonn = False
 
     if args.lm_harness_eval:
         import lm_eval
@@ -60,6 +59,7 @@ if __name__ == "__main__":
         print(results["results"])
     else:
         from lm_perplexity_eval import evaluate
+        print(args.use_axonn)
         ppl = evaluate(model_id=args.model_id,
                     dataset="wikitext-test",
                     sequence_length=args.sequence_length,
