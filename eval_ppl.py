@@ -64,6 +64,7 @@ if __name__ == "__main__":
                     dataset="wikitext-test",
                     sequence_length=args.sequence_length,
                     use_axonn=args.use_axonn,
-                    past_key_values=cache,)
+                    past_key_values=cache,
+                    axonn_low_level_api=True)
 
         print(ppl)
