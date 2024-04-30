@@ -11,6 +11,14 @@ from functools import partial
 from methods.common.utils import mask_attn_top_k
 import methods
 
+try:
+    from axonn import axonn as ax
+    from axonn.intra_layer import gather
+    AXONN_AVAILABLE=True
+except ImportError:
+    AXONN_AVAILABLE=False
+
+
 def get_top_k_forward(top_k):
     def modified_forward(
         self,
@@ -20,6 +28,7 @@ def get_top_k_forward(top_k):
         past_key_value: Optional[Cache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        cache_position = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if "padding_mask" in kwargs:
@@ -56,47 +65,45 @@ def get_top_k_forward(top_k):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         if methods.G_TENSOR_SAVER is not None:
-            methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
-            methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
-            methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
+            if AXONN_AVAILABLE and ax.is_initialized:
+                key_tensor_to_save = gather(key_states, transpose=True, dim=1, skip_batch=True)
+                if torch.distributed.get_rank() == 0:
+                    methods.G_TENSOR_SAVER.save("key", key_tensor_to_save, self.layer_idx, "prerotary")
+                del key_tensor_to_save
+            else:
+                methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
 
-        kv_seq_len = key_states.shape[-2]
-        if past_key_value is not None:
-            if self.layer_idx is None:
-                raise ValueError(
-                    f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
-                    "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
-                    "with a layer index."
-                )
-            kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
+
+        past_key_value = getattr(self, "past_key_value", past_key_value)
+        cos, sin = self.rotary_emb(value_states, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
+            # sin and cos are specific to RoPE models; cache_position needed for the static cache
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
+
         if methods.G_TENSOR_SAVER is not None:
-            methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "postrotary")
-            methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
+            if AXONN_AVAILABLE and ax.is_initialized:
+                key_tensor_to_save = gather(key_states, transpose=True, dim=1, skip_batch=True)
+                if torch.distributed.get_rank() == 0:
+                    methods.G_TENSOR_SAVER.save("key", key_tensor_to_save, self.layer_idx, "postrotary")
+                del key_tensor_to_save
+            else:
+                methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "postrotary")
+            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
 
-        if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
-            raise ValueError(
-                f"Attention weights should be of size {(bsz, self.num_heads, q_len, kv_seq_len)}, but is"
-                f" {attn_weights.size()}"
-            )
-
-        if attention_mask is not None:
-            if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
-                raise ValueError(
-                    f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
-                )
-            attn_weights = attn_weights + attention_mask
+        if attention_mask is not None:  # no matter the length, we just slice it
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
 
         # Get top-k attention weights
         if top_k <= 1:

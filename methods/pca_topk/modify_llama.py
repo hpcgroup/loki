@@ -14,7 +14,9 @@ from .utils import mask_attn_pca_topk
 import methods
 
 import os
-pca_data_path = "/global/cfs/cdirs/m4641/ApproxAttn"
+#pca_data_path = "/global/cfs/cdirs/m4641/ApproxAttn"
+pca_data_path="/pscratch/sd/s/ssingh37/InferenceData/topk/" 
+
 
 try:
     from axonn import axonn as ax
@@ -24,9 +26,10 @@ except ImportError:
     AXONN_AVAILABLE=False
 
 def get_pca_components(layer_idx, head_dim, top_r):
-    components_file_path = os.path.join(pca_data_path, "Llama2-7B-PCA/wikitext/postrotary/key/pca_components/pca_components_layer_{}.pt".format(layer_idx))
-    mean_file_path = os.path.join(pca_data_path, "Llama2-7B-PCA/wikitext/postrotary/key/pca_means/pca_means_layer_{}.pt".format(layer_idx))
-    explained_variance_file_path = os.path.join(pca_data_path, "Llama2-7B-PCA/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{}.pt".format(layer_idx))
+    model_folder_name = "Meta-Llama-3-8B" # FIXME: this should be made generic, and not hardcoded to a specific model
+    components_file_path = os.path.join(pca_data_path, f"{model_folder_name}/wikitext/postrotary/key/pca_components/pca_components_layer_{layer_idx}.pt")
+    mean_file_path = os.path.join(pca_data_path, f"{model_folder_name}/wikitext/postrotary/key/pca_means/pca_means_layer_{layer_idx}.pt")
+    explained_variance_file_path = os.path.join(pca_data_path, f"{model_folder_name}/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{layer_idx}.pt")
 
     # PCA Components with the shape (num_heads, head_dim, top_r)
     pca_components = torch.load(components_file_path).to("cuda")
