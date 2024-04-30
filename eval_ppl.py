@@ -14,6 +14,7 @@ if __name__ == "__main__":
     parser.add_argument("--sequence-length", type=int, default=4096, help="sequence length")
     parser.add_argument("--use-axonn", action='store_true', default=False, help="shard a model using AxoNN")
     parser.add_argument("--lm-harness-eval", action='store_true', default=False, help="use lm harness eval")
+    parser.add_argument("--dataset", type=str, default="wikitext-test", help="which dataset to use for ppl eval")
 
     parser = get_h2o_args(parser)
     parser = get_topk_args(parser)
@@ -61,7 +62,7 @@ if __name__ == "__main__":
         from lm_perplexity_eval import evaluate
         print(args.use_axonn)
         ppl = evaluate(model_id=args.model_id,
-                    dataset="wikitext-test",
+                    dataset=args.dataset,
                     sequence_length=args.sequence_length,
                     use_axonn=args.use_axonn,
                     past_key_values=cache,
