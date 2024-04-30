@@ -13,85 +13,66 @@ from functools import partial
 from .utils import mask_attn_pca_topk
 import methods
 
-def get_pca_init(top_r, top_k):
-    def modified_attention_init(self, config: MistralConfig, layer_idx: Optional[int] = None):
-        super(MistralAttention, self).__init__()
-        self.config = config
-        self.layer_idx = layer_idx
-        if layer_idx is None:
-            logger.warning_once(
-                f"Instantiating {self.__class__.__name__} without passing a `layer_idx` is not recommended and will "
-                "lead to errors during the forward call if caching is used. Please make sure to provide a `layer_idx` "
-                "when creating this class."
-            )
 
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-        self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = config.rope_theta
-        self.is_causal = True
-        self.attention_dropout = config.attention_dropout
-
-        if (self.head_dim * self.num_heads) != self.hidden_size:
-            raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-
-        self.rotary_emb = MistralRotaryEmbedding(
-            self.head_dim,
-            max_position_embeddings=self.max_position_embeddings,
-            base=self.rope_theta,
-        )
-
-        # Initialise PCA transforms
-        components_file_path = "/pscratch/sd/p/prajwal/InferenceData/Mistral-7B-PCA/wikitext/postrotary/key/pca_components/pca_components_layer_{}.pt".format(layer_idx)
-        mean_file_path = "/pscratch/sd/p/prajwal/InferenceData/Mistral-7B-PCA/wikitext/postrotary/key/pca_means/pca_means_layer_{}.pt".format(layer_idx)
-        explained_variance_file_path = "/pscratch/sd/p/prajwal/InferenceData/Mistral-7B-PCA/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{}.pt".format(layer_idx)
-
-        # PCA Components with the shape (num_heads, head_dim, top_r)
-        self.pca_components = torch.load(components_file_path).to("cuda")
-
-        # PCA Means with the shape (num_heads, head_dim)
-        self.pca_means = torch.load(mean_file_path).to("cuda")
-
-        # Explained Variance with the shape (num_heads, head_dim)
-        self.pca_explained_variance = torch.load(explained_variance_file_path).to("cuda")
-
-        # Reshaping the components and taking a transpose to have components along the column dimension and means to be easily broadcastable over the keys
-        self.pca_components = self.pca_components.reshape(1, self.num_key_value_heads, self.head_dim, self.head_dim).transpose(2, 3)
-        self.pca_means = self.pca_means.reshape(1, self.num_key_value_heads, 1, self.head_dim)
-
-        # Get the point where the explained variance is 95% per head
-        explained_variance_cumsum = self.pca_explained_variance.cumsum(-1)
-
-        if top_r < 1:
-            # Find the maximum index where the explained variance is 95% across all heads - Uncomment this line adaptively set the top_r:w
-            top_correct_r = (explained_variance_cumsum < top_r).sum(-1).max().item()
-        #    # Instead of sum, we use the median index 
-        #    #top_r = (explained_variance_cumsum < 0.95).sum(-1).median().item()
-        else:
-            top_correct_r = int(top_r)
-
-        # Only keep the top_r components of the pca_components
-        self.pca_components_r_key = self.pca_components[:, :, :, :top_correct_r]
-
-        self.pca_components_r_key = repeat_kv(self.pca_components_r_key, self.num_key_value_groups)
-        self.pca_components = repeat_kv(self.pca_components, self.num_key_value_groups)
-
-        print ("{}: PCA Components Shape: {}".format(layer_idx, self.pca_components_r_key.shape))
-        print ("{}: PCA Means Shape: {}".format(layer_idx, self.pca_means.shape))
-        print ("Compression Ratio: {}".format(top_correct_r / self.head_dim))    
-    return modified_attention_init
+import os
+pca_data_path = "/global/cfs/cdirs/m4641/ApproxAttn"
 
 
+try:
+    from axonn import axonn as ax
+    from axonn.intra_layer import drop
+    AXONN_AVAILABLE=True
+except ImportError:
+    AXONN_AVAILABLE=False
+
+def get_pca_components(layer_idx, head_dim, top_r, num_key_value_groups):
+    components_file_path = os.path.join(pca_data_path, "Mistral-7B-PCA/wikitext/postrotary/key/pca_components/pca_components_layer_{}.pt".format(layer_idx))
+    mean_file_path = os.path.join(pca_data_path, "Mistral-7B-PCA/wikitext/postrotary/key/pca_means/pca_means_layer_{}.pt".format(layer_idx))
+    explained_variance_file_path = os.path.join(pca_data_path, "Mistral-7B-PCA/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{}.pt".format(layer_idx))
+
+    # PCA Components with the shape (num_heads, head_dim, top_r)
+    pca_components = torch.load(components_file_path).to("cuda")
+
+    # PCA Means with the shape (num_heads, head_dim)
+    pca_means = torch.load(mean_file_path).to("cuda")
+
+    # Explained Variance with the shape (num_heads, head_dim)
+    pca_explained_variance = torch.load(explained_variance_file_path).to("cuda")
+
+    # Reshaping the components and taking a transpose to have components along the column dimension and means to be easily broadcastable over the keys
+    pca_components = pca_components.reshape(1, -1, head_dim, head_dim).transpose(2, 3)
+    pca_means = pca_means.reshape(1, -1, 1, head_dim)
+
+    # Get the point where the explained variance is 95% per head
+    explained_variance_cumsum = pca_explained_variance.cumsum(-1)
+
+
+    if top_r < 1:
+        # Find the maximum index where the explained variance is 95% across all heads - Uncomment this line adaptively set the top_r:w
+        top_correct_r = (explained_variance_cumsum < top_r).sum(-1).max().item()
+
+    #    # Instead of sum, we use the median index 
+    #    #top_r = (explained_variance_cumsum < 0.95).sum(-1).median().item()
+    else:
+        top_correct_r = int(top_r)
+
+    # Only keep the top_r components of the pca_components
+    pca_components_r_key = pca_components[:, :, :, :top_correct_r]
+    pca_components_r_key = repeat_kv(pca_components_r_key, num_key_value_groups)
+    pca_components = repeat_kv(pca_components, num_key_value_groups)
+
+
+    print ("{}: PCA Components Shape: {}".format(layer_idx, pca_components_r_key.shape))
+    print ("{}: PCA Means Shape: {}".format(layer_idx, pca_means.shape))
+    print ("Compression Ratio: {}".format(top_correct_r / head_dim))
+
+    if AXONN_AVAILABLE and ax.is_initialized:
+        ## only keep pca data for the heads on the GPU
+        pca_components = drop(pca_components, transpose=True, skip_batch=True, dim=1)
+        pca_means = drop(pca_means, transpose=True, skip_batch=True, dim=1)
+        pca_components_r_key = drop(pca_components_r_key, transpose=True, skip_batch=True, dim=1)
+
+    return pca_means, pca_components, pca_components_r_key
 def get_pca_forward(top_r, top_k):
     def modified_forward(
         self,
@@ -107,6 +88,9 @@ def get_pca_forward(top_r, top_k):
             warnings.warn(
                 "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
             )
+
+        if not hasattr(self, "pca_components"):
+            self.pca_means, self.pca_components, self.pca_components_r_key = get_pca_components(self.layer_idx, self.head_dim, top_r, self.num_key_value_groups)
         bsz, q_len, _ = hidden_states.size()
 
         query_states = self.q_proj(hidden_states)
@@ -191,5 +175,4 @@ def make_mistral_attention_pca_topk(top_r, top_k):
     print ("Modifying Mistral Attention -> PCA Attention")
     print ("Top R:", top_r)
     print ("Top K:", top_k)
-    MistralAttention.__init__ = get_pca_init(top_r, top_k)
     MistralAttention.forward = get_pca_forward(top_r, top_k)
