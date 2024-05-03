@@ -4,7 +4,9 @@ from configure_model import get_modifier
 
 import argparse
 import os
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["RANK"] = os.getenv("SLURM_PROCID", "0")
 
 
 if __name__ == "__main__":
@@ -14,7 +16,7 @@ if __name__ == "__main__":
     parser.add_argument("--sequence-length", type=int, default=4096, help="sequence length")
     parser.add_argument("--use-axonn", action='store_true', default=False, help="shard a model using AxoNN")
     parser.add_argument("--lm-harness-eval", action='store_true', default=False, help="use lm harness eval")
-    parser.add_argument("--dataset", type=str, default="wikitext-test", help="which dataset to use for ppl eval")
+    parser.add_argument("--dataset", type=str, default="wikitext-test", help="dataset - wikitext, bookcorpus, c4")
 
     parser = get_h2o_args(parser)
     parser = get_topk_args(parser)
@@ -23,8 +25,14 @@ if __name__ == "__main__":
     parser = get_save_tensor_args(parser)
     args = parser.parse_args()
 
+    rank = 0
+    world_size = 1
+    if args.use_axonn:
+        world_size = os.getenv("WORLD_SIZE")
+        rank = int(os.getenv("RANK"))
+
     if args.save_tensors:
-        init_tensor_saver(args.tensors_dir)
+        init_tensor_saver(args.tensors_dir, rank)
 
     modifier_method = get_modifier(args)
     if modifier_method is None:
@@ -47,14 +55,16 @@ if __name__ == "__main__":
     elif args.use_pca_topk:
         modifier_method(args.top_r, args.top_k)
 
+    
     if args.lm_harness_eval:
         import lm_eval
         results = lm_eval.simple_evaluate(
             model = "hf",
             model_args=f"pretrained={args.model_id}",
             tasks = ["copa", "rte", "openbookqa", "mathqa", "winogrande", "hellaswag"],
-            #tasks = ["hellaswag"],
+            #tasks = ["gsm8k"],
             log_samples=False,
+            batch_size=8
         )
 
         print(results["results"])

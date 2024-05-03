@@ -121,7 +121,14 @@ def get_pca_forward(top_r, top_k):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+        self.pca_means = self.pca_means.to(key_states.dtype)
+        self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
+        self.pca_components = self.pca_components.to(key_states.dtype)
+
+
+        key_states_pca  = torch.matmul(key_states, self.pca_components)
+        query_states_pca = torch.matmul(query_states, self.pca_components)
+        attn_weights = (torch.matmul(query_states_pca, key_states_pca.transpose(2, 3))) / math.sqrt(self.head_dim)
 
         if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
             raise ValueError(
@@ -137,10 +144,6 @@ def get_pca_forward(top_r, top_k):
 
             attn_weights = attn_weights + attention_mask
 
-        self.pca_means = self.pca_means.to(key_states.dtype)
-        self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
-        self.pca_components = self.pca_components.to(key_states.dtype)
-
         if top_k <= 1:
             topk = int(top_k * attn_weights.shape[-1])
         else:
@@ -153,6 +156,15 @@ def get_pca_forward(top_r, top_k):
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
+
+        ## Compute cumulative sum along the desired dimension
+        #cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
+
+        ## Compute the cumulative mean along the desired dimension
+        #cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
+
+        #attn_output = ((1 - alpha) * cumulative_mean) + alpha * attn_output
+        #attn_output = attn_output.to(query_states.dtype)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(

@@ -129,7 +129,20 @@ def get_pca_forward(top_r, top_k):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        attn_weights = (torch.matmul(query_states, key_states.transpose(2, 3))) / math.sqrt(self.head_dim)
+        #attn_weights = (torch.matmul(query_states, key_states.transpose(2, 3))) / math.sqrt(self.head_dim)
+
+        #print ("Attn Weights DType:", attn_weights.dtype)
+
+        self.pca_means = self.pca_means.to(key_states.dtype)
+        self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
+        self.pca_components = self.pca_components.to(key_states.dtype)
+
+
+        key_states_pca  = torch.matmul(key_states, self.pca_components)
+        query_states_pca = torch.matmul(query_states, self.pca_components)
+        attn_weights = (torch.matmul(query_states_pca, key_states_pca.transpose(2, 3))) / math.sqrt(self.head_dim)
+        
+        #print ("Attn Weights DType:", attn_weights.dtype)
 
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
@@ -149,7 +162,7 @@ def get_pca_forward(top_r, top_k):
 
         assert alpha is not None, "alpha is None"
 
-        #print ("Alpha:", alpha.shape)
+        #print ("Alpha:", alpha.dtype)
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -167,7 +180,14 @@ def get_pca_forward(top_r, top_k):
         # Compute the cumulative mean along the desired dimension
         cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
 
-        attn_output = ((1 - alpha) * cumulative_mean) + alpha * attn_output
+        # Compute cumulative sum along the desired dimension
+        #cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
+
+        ## Compute the cumulative mean along the desired dimension
+        #cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
+
+        #attn_output = ((1 - alpha) * cumulative_mean) + alpha * attn_output
+        #attn_output = attn_output.to(query_states.dtype)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(

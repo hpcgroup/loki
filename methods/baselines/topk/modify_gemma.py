@@ -34,9 +34,9 @@ def get_top_k_forward(top_k, use_percentage=False):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         if methods.G_TENSOR_SAVER is not None:
-            methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx)
-            methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx)
-            methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx)
+            methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
 
 
         past_key_value = getattr(self, "past_key_value", past_key_value)
@@ -47,6 +47,10 @@ def get_top_k_forward(top_k, use_percentage=False):
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+        if methods.G_TENSOR_SAVER is not None:
+            methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "postrotary")
+            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)

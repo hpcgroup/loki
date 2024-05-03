@@ -10,14 +10,21 @@ CATEGORY_TO_BASEFILE = {
 }
 
 class TensorSaver:
-    def __init__(self, output_dir):
+    def __init__(self, output_dir, rank = 0):
         self.output_dir = output_dir
         self.index_dict = {}
         self.last_idx = -1
+        self.rank = rank
         for category, basefile in CATEGORY_TO_BASEFILE.items():
             self.index_dict[category] = 0
 
     def save(self, category, tensor, extra_idx = None, extra_dir = ""):
+        # Only save the tensor if the rank is 0
+        if self.rank != 0: 
+            return
+        # Print the first time the function is called
+        if self.index_dict[category] == 0:
+            print(f"Saving tensor {category} with shape {tensor.shape}")
         os.makedirs(os.path.join(self.output_dir, extra_dir, category), exist_ok=True)
         output_dir = os.path.join(self.output_dir, extra_dir, category)
         # Clear the directory if it is the first tensor
