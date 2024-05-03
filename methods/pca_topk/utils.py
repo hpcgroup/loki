@@ -9,8 +9,8 @@ def mask_attn_pca_topk(layer_idx, attn_weights, attention_mask, query_states, ke
 
     # Default recent history = k / 4
     if l == -1:
-        l = top_k / 4
-        #l = 0
+        #l = top_k / 4
+        l = 0
 
     # Transform key_states and query_states to PCA space
     #key_states_pca = torch.matmul(key_states, pca_comps_full).to(query_states.dtype)
@@ -41,8 +41,8 @@ def mask_attn_pca_topk(layer_idx, attn_weights, attention_mask, query_states, ke
     # Adding 1 to the recent token scores makes sure they are in the top-k
     #s_hat_recent = s_hat + mask_recent
 
-    if (top_k >= key_states.shape[2]):
-        top_k = key_states.shape[2]
+    if (top_k >= key_states.shape[-2]):
+        top_k = key_states.shape[-2]
 
     # Get top-k keys based on the s_hat_recent score matrix
     i2 = torch.topk(attn_weights_s_hat, top_k, dim=-1).indices

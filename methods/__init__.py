@@ -25,8 +25,8 @@ from .common.saver import TensorSaver as TensorSaver
 
 G_TENSOR_SAVER = None
 
-def init_tensor_saver(tensor_dir):
+def init_tensor_saver(tensor_dir, rank = 0):
     global G_TENSOR_SAVER 
-    G_TENSOR_SAVER = TensorSaver(tensor_dir)
+    G_TENSOR_SAVER = TensorSaver(tensor_dir, rank)
 
 
