@@ -10,12 +10,8 @@ from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
-from .utils import mask_attn_pca_topk
+from .utils import mask_attn_pca_topk, get_pca_components
 import methods
-
-import os
-#pca_data_path = "/global/cfs/cdirs/m4641/ApproxAttn"
-pca_data_path="/pscratch/sd/s/ssingh37/InferenceData/topk/" 
 
 
 try:
@@ -25,54 +21,7 @@ try:
 except ImportError:
     AXONN_AVAILABLE=False
 
-def get_pca_components(layer_idx, head_dim, top_r):
-    model_folder_name = "Meta-Llama-3-8B" # FIXME: this should be made generic, and not hardcoded to a specific model
-    components_file_path = os.path.join(pca_data_path, f"{model_folder_name}/wikitext/postrotary/key/pca_components/pca_components_layer_{layer_idx}.pt")
-    mean_file_path = os.path.join(pca_data_path, f"{model_folder_name}/wikitext/postrotary/key/pca_means/pca_means_layer_{layer_idx}.pt")
-    explained_variance_file_path = os.path.join(pca_data_path, f"{model_folder_name}/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{layer_idx}.pt")
-
-    # PCA Components with the shape (num_heads, head_dim, top_r)
-    pca_components = torch.load(components_file_path).to("cuda")
-
-    # PCA Means with the shape (num_heads, head_dim)
-    pca_means = torch.load(mean_file_path).to("cuda")
-
-    # Explained Variance with the shape (num_heads, head_dim)
-    pca_explained_variance = torch.load(explained_variance_file_path).to("cuda")
-
-    # Reshaping the components and taking a transpose to have components along the column dimension and means to be easily broadcastable over the keys
-    pca_components = pca_components.reshape(1, -1, head_dim, head_dim).transpose(2, 3)
-    pca_means = pca_means.reshape(1, -1, 1, head_dim)
-
-    # Get the point where the explained variance is 95% per head
-    explained_variance_cumsum = pca_explained_variance.cumsum(-1)
-
-
-    if top_r < 1:
-        # Find the maximum index where the explained variance is 95% across all heads - Uncomment this line adaptively set the top_r:w
-        top_correct_r = (explained_variance_cumsum < top_r).sum(-1).max().item()
-
-    #    # Instead of sum, we use the median index 
-    #    #top_r = (explained_variance_cumsum < 0.95).sum(-1).median().item()
-    else:
-        top_correct_r = int(top_r)
-
-    # Only keep the top_r components of the pca_components
-    pca_components_r_key = pca_components[:, :, :, :top_correct_r]
-
-    print ("{}: PCA Components Shape: {}".format(layer_idx, pca_components_r_key.shape))
-    print ("{}: PCA Means Shape: {}".format(layer_idx, pca_means.shape))
-    print ("Compression Ratio: {}".format(top_correct_r / head_dim))
-
-    if AXONN_AVAILABLE and ax.is_initialized:
-        ## only keep pca data for the heads on the GPU
-        pca_components = drop(pca_components, transpose=True, skip_batch=True, dim=1)
-        pca_means = drop(pca_means, transpose=True, skip_batch=True, dim=1)
-        pca_components_r_key = drop(pca_components_r_key, transpose=True, skip_batch=True, dim=1)
-
-    return pca_means, pca_components, pca_components_r_key
-
-def get_pca_forward(top_r, top_k):
+def get_pca_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -89,7 +38,7 @@ def get_pca_forward(top_r, top_k):
             )
 
         if not hasattr(self, "pca_components"):
-            self.pca_means, self.pca_components, self.pca_components_r_key = get_pca_components(self.layer_idx, self.head_dim, top_r)
+            self.pca_means, self.pca_components, self.pca_components_r_key = get_pca_components(args, self.layer_idx, self.head_dim, args.top_r, self.num_key_value_groups, repeat_kv)
         bsz, q_len, _ = hidden_states.size()
 
         if self.config.pretraining_tp > 1:
@@ -148,16 +97,15 @@ def get_pca_forward(top_r, top_k):
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
             attn_weights = attn_weights + causal_mask
 
-
         pca_means = self.pca_means.to(key_states.dtype)
         pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
         pca_components = self.pca_components.to(key_states.dtype)
 
-        if top_k <= 1:
-            topk = int(top_k * attn_weights.shape[-1])
+        if args.top_k <= 1:
+            topk = int(args.top_k * attn_weights.shape[-1])
         else:
-            topk = int(top_k)
-        attn_weights, alpha = mask_attn_pca_topk(self.layer_idx, attn_weights, attention_mask, query_states, key_states, pca_components, pca_components_r_key, top_r, topk)
+            topk = int(args.top_k)
+        attn_weights, alpha = mask_attn_pca_topk(args, self.layer_idx, attn_weights, attention_mask, query_states, key_states, pca_components, pca_components_r_key, args.top_r, topk)
 
 
         assert alpha is not None, "alpha is None"
@@ -212,9 +160,9 @@ def get_pca_forward(top_r, top_k):
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_llama_attention_pca_topk(top_r, top_k):
+def make_llama_attention_pca_topk(args):
     print ("Modifying Llama Attention -> PCA TopK Attention")
-    print ("Top R:", top_r)
-    print ("Top K:", top_k)
+    print ("Top R:", args.top_r)
+    print ("Top K:", args.top_k)
     #LlamaAttention.__init__ = get_pca_init(top_r, top_k)
-    LlamaAttention.forward = get_pca_forward(top_r, top_k)
+    LlamaAttention.forward = get_pca_forward(args)

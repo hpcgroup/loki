@@ -19,7 +19,7 @@ except ImportError:
     AXONN_AVAILABLE=False
 
 
-def get_top_k_forward(top_k):
+def get_top_k_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -106,10 +106,10 @@ def get_top_k_forward(top_k):
             attn_weights = attn_weights + causal_mask
 
         # Get top-k attention weights
-        if top_k <= 1:
-            topk = int(top_k * attn_weights.shape[-1])
+        if args.top_k <= 1:
+            topk = int(args.top_k * attn_weights.shape[-1])
         else:
-            topk = int(top_k)
+            topk = int(args.top_k)
         attn_weights = mask_attn_top_k(attn_weights, topk, dim=-1)
 
         # upcast attention to fp32
@@ -141,11 +141,11 @@ def get_top_k_forward(top_k):
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_llama_attention_top_k(top_k, use_percentage=False):
+def make_llama_attention_top_k(args):
     print ("Modifying Llama Attention -> TopK Attention")
-    if not use_percentage:
-        print (f"TopK - {top_k}")
+    if args.top_k <= 1:
+        print (f"TopK% - {args.top_k}")
     else:
-        print (f"TopK% - {top_k}")
+        print (f"TopK - {args.top_k}")
 
-    LlamaAttention.forward = get_top_k_forward(top_k)
+    LlamaAttention.forward = get_top_k_forward(args)

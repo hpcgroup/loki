@@ -1,13 +1,13 @@
 from methods import init_tensor_saver
-from configure_model import get_h2o_args, get_topk_args, get_spar_args, get_pca_args, get_save_tensor_args
-from configure_model import get_modifier
+from methods.common.configure_model import get_h2o_args, get_topk_args, get_spar_args, get_pca_args, get_save_tensor_args
+from methods.common.configure_model import get_modifier
+from methods import init_logger, finish_logger
+import methods
 
 import argparse
 import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["RANK"] = os.getenv("SLURM_PROCID", "0")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -17,6 +17,7 @@ if __name__ == "__main__":
     parser.add_argument("--use-axonn", action='store_true', default=False, help="shard a model using AxoNN")
     parser.add_argument("--lm-harness-eval", action='store_true', default=False, help="use lm harness eval")
     parser.add_argument("--dataset", type=str, default="wikitext-test", help="dataset - wikitext, bookcorpus, c4")
+    parser.add_argument("--use-wandb", action='store_true', default=False, help="use wandb")
 
     parser = get_h2o_args(parser)
     parser = get_topk_args(parser)
@@ -25,14 +26,10 @@ if __name__ == "__main__":
     parser = get_save_tensor_args(parser)
     args = parser.parse_args()
 
-    rank = 0
-    world_size = 1
-    if args.use_axonn:
-        world_size = os.getenv("WORLD_SIZE")
-        rank = int(os.getenv("RANK"))
-
     if args.save_tensors:
-        init_tensor_saver(args.tensors_dir, rank)
+        init_tensor_saver(args.tensors_dir)
+
+    init_logger(args)
 
     modifier_method = get_modifier(args)
     if modifier_method is None:
@@ -41,10 +38,8 @@ if __name__ == "__main__":
     print (modifier_method)
 
     cache = None
-    if args.use_topk:
-        modifier_method(args.top_k)
-    elif args.use_h2o:
-        modifier_method(args.heavy_ratio)
+    if args.use_topk or args.use_h2o or args.use_pca_topk:
+        modifier_method(args)
     elif args.use_sparq or args.use_spark:
         modifier_method(args.top_r, args.top_k)
     elif args.use_spar_hat:
@@ -52,9 +47,6 @@ if __name__ == "__main__":
     elif args.use_pca:
         modifier_method(args.top_r)
         args.use_axonn = False
-    elif args.use_pca_topk:
-        modifier_method(args.top_r, args.top_k)
-
     
     if args.lm_harness_eval:
         import lm_eval
@@ -68,6 +60,8 @@ if __name__ == "__main__":
         )
 
         print(results["results"])
+        if methods.LOGGER is not None:
+            methods.LOGGER.log(results)
     else:
         from lm_perplexity_eval import evaluate
         print(args.use_axonn)
@@ -79,3 +73,7 @@ if __name__ == "__main__":
                     axonn_low_level_api=True)
 
         print(ppl)
+        if methods.LOGGER is not None:
+            methods.LOGGER.log({"ppl": ppl})
+    
+    finish_logger()

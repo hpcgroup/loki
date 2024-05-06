@@ -17,7 +17,7 @@ from functools import partial
 from methods.common.utils import mask_attn_top_k
 import methods
 
-def get_top_k_forward(top_k):
+def get_top_k_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -61,7 +61,7 @@ def get_top_k_forward(top_k):
 
         if methods.G_TENSOR_SAVER is not None:
             methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "postrotary")
-            methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
+            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
 
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -107,11 +107,11 @@ def get_top_k_forward(top_k):
     return modified_forward
 
 
-def make_phi_attention_top_k(top_k):
+def make_phi_attention_top_k(args):
     print ("Modifying Phi Attention -> TopK Attention")
-    if top_k > 1:
-        print (f"TopK - {top_k}")
+    if args.top_k > 1:
+        print (f"TopK - {args.top_k}")
     else:
-        print (f"TopK% - {top_k}")
+        print (f"TopK% - {args.top_k}")
 
-    Phi3Attention.forward = get_top_k_forward(top_k)
+    Phi3Attention.forward = get_top_k_forward(args)

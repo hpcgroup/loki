@@ -10,7 +10,7 @@ from methods.common.utils import mask_attn_top_k
 import methods
 
 
-def get_top_k_forward(top_k, use_percentage=False):
+def get_top_k_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -88,10 +88,10 @@ def get_top_k_forward(top_k, use_percentage=False):
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
         # Get top-k attention weights
-        if top_k <= 1:
-            topk = int(top_k * attn_weights.shape[-1])
+        if args.top_k <= 1:
+            topk = int(args.top_k * attn_weights.shape[-1])
         else:
-            topk = int(top_k)
+            topk = int(args.top_k)
         attn_weights = mask_attn_top_k(attn_weights, topk, dim=-1)
 
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
@@ -143,11 +143,11 @@ def get_top_k_forward(top_k, use_percentage=False):
 
 
 # TODO: Remove use_percentage
-def make_opt_attention_top_k(top_k, use_percentage=False):
+def make_opt_attention_top_k(args):
     print ("Modifying OPT Attention -> TopK Attention")
-    if not use_percentage:
-        print (f"TopK - {top_k}")
+    if args.top_k <= 1:
+        print (f"TopK% - {args.top_k}")
     else:
-        print (f"TopK% - {top_k}")
+        print (f"TopK - {args.top_k}")
 
-    OPTAttention.forward = get_top_k_forward(top_k, use_percentage)
+    OPTAttention.forward = get_top_k_forward(args)

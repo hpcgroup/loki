@@ -12,7 +12,7 @@ from .external.h2o_utils import local_heavy_hitter_mask
 import methods
 
 
-def get_h2o_attn(heavy_ratio):
+def get_h2o_attn(args):
     def modified_attn(self, query, key, value, attention_mask=None, head_mask=None):
         # q, k, v: [bs, num_attention_heads, seq_len, attn_head_size]
         # compute causal mask from causal mask buffer
@@ -60,8 +60,8 @@ def get_h2o_attn(heavy_ratio):
             attention_mask = torch.where(causal_mask, torch.tensor(0.0).to(attn_scores.dtype), mask_value)
 
         ### Heavy + Recent
-        heavy_budget = int(heavy_ratio * attn_scores.shape[-1])
-        recent_budget = int(heavy_ratio * attn_scores.shape[-1])
+        heavy_budget = int(args.heavy_ratio * attn_scores.shape[-1])
+        recent_budget = int(args.heavy_ratio * attn_scores.shape[-1])
 
         # Heavy Hitter Mask
         if heavy_budget > 0:
@@ -91,8 +91,8 @@ def get_h2o_attn(heavy_ratio):
         return attn_output, attn_weights
     return modified_attn
 
-def make_gptneox_attention_h2o(hr):
+def make_gptneox_attention_h2o(args):
     #TODO: Maybe we should not use fractions here to be consistent with other methods
     print ("Modifying GPT NeoX Attention -> H2O")
-    print (f"Heavy and Recent Ratio:{hr}")
-    GPTNeoXAttention._attn = get_h2o_attn(hr)
+    print (f"Heavy and Recent Ratio:{args.heavy_ratio}")
+    GPTNeoXAttention._attn = get_h2o_attn(args)

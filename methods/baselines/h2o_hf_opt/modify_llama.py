@@ -11,7 +11,7 @@ import time
 
 from .h2o_utils import local_heavy_hitter_mask
 
-def get_hfopth2o_forward(heavy_ratio):
+def get_hfopth2o_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -90,8 +90,8 @@ def get_hfopth2o_forward(heavy_ratio):
             attn_weights = torch.max(attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min))
         
         ### Heavy + Recent
-        heavy_budget = int(heavy_ratio * attn_weights.shape[-1])
-        recent_budget = int(heavy_ratio * attn_weights.shape[-1])
+        heavy_budget = int(args.heavy_ratio * attn_weights.shape[-1])
+        recent_budget = int(args.heavy_ratio * attn_weights.shape[-1])
 
         # Heavy Hitter Mask
         alpha = None
@@ -109,26 +109,12 @@ def get_hfopth2o_forward(heavy_ratio):
         # Now we change the mask_bottom tensor to have 0 in place of True and -inf in place of False
         mask_bottom = torch.where(mask_bottom, torch.tensor(0.0, dtype=torch.float32), torch.tensor(-float('inf'), dtype=torch.float32)).to(attention_mask.dtype)
 
-        #mask_bottom = mask_bottom.float().neg_().add_(1).mul_(-float('inf'))
-
-        # mask_bottom = ones
         attn_weights = attn_weights + mask_bottom
-        #attn_weights[~mask_bottom] = torch.min(attention_mask)
-
-        #alpha = torch.sum(mask_bottom, dim=-1, keepdim=True)/mask_bottom.shape[-1];
-
-        #mask_bottom = ~mask_bottom
-        #mask_bottom = torch.tril(mask_bottom, diagonal=0)
-
-        #mask_bottom = (mask_bottom / (torch.sum(mask_bottom, dim=-1, keepdim=True) + 1e-8))
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
-
-        #if alpha is not None:
-        #    attn_output = alpha * attn_output + (1-alpha) * torch.mean(attn_output, dim=-2, keepdim=True)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -153,8 +139,8 @@ def get_hfopth2o_forward(heavy_ratio):
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_llama_attention_h2o(hr):
+def make_llama_attention_h2o(args):
     #TODO: Maybe we should not use fractions here to be consistent with other methods
     print ("Modifying Llama Attention -> HF Optimised H2O")
-    print (f"Heavy and Recent Ratio:{hr}")
-    LlamaAttention.forward = get_hfopth2o_forward(hr)
+    print (f"Heavy and Recent Ratio:{args.heavy_ratio}")
+    LlamaAttention.forward = get_hfopth2o_forward(args)

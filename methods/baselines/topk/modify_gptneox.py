@@ -11,7 +11,7 @@ from functools import partial
 from methods.common.utils import mask_attn_top_k
 import methods
 
-def get_topk_init(top_k):
+def get_topk_init(args):
     def modified_attention_init(self, config):
         super(GPTNeoXAttention, self).__init__()
         self.config = config
@@ -38,7 +38,7 @@ def get_topk_init(top_k):
     return modified_attention_init
 
 
-def get_topk_attn(top_k):
+def get_topk_attn(args):
     def modified_attn(self, query, key, value, attention_mask=None, head_mask=None):
         # q, k, v: [bs, num_attention_heads, seq_len, attn_head_size]
         # compute causal mask from causal mask buffer
@@ -79,10 +79,10 @@ def get_topk_attn(top_k):
             attn_scores = attn_scores + attention_mask
         
         # Get top-k attention weights
-        if top_k <= 1:
-            topk = int(top_k * attn_scores.shape[-1])
+        if args.top_k <= 1:
+            topk = int(args.top_k * attn_scores.shape[-1])
         else:
-            topk = int(top_k)
+            topk = int(args.top_k)
         attn_scores = mask_attn_top_k(attn_scores, topk, dim=-1)
 
         attn_weights = nn.functional.softmax(attn_scores, dim=-1)
@@ -98,7 +98,7 @@ def get_topk_attn(top_k):
         return attn_output, attn_weights
     return modified_attn
 
-def get_top_k_forward(top_k, use_percentage=False):
+def get_top_k_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.FloatTensor,
@@ -173,13 +173,13 @@ def get_top_k_forward(top_k, use_percentage=False):
         return outputs
     return modified_forward
 
-def make_gptneox_attention_top_k(top_k, use_percentage=False):
+def make_gptneox_attention_top_k(args):
     print ("Modifying GPT Neo X Attention -> TopK Attention")
-    if not use_percentage:
-        print (f"TopK - {top_k}")
+    if args.top_k <= 1:
+        print (f"TopK - {args.top_k} (Percentage)")
     else:
-        print (f"TopK% - {top_k}")
+        print (f"TopK - {args.top_k}")
 
-    GPTNeoXAttention.forward = get_top_k_forward(top_k, use_percentage)
-    GPTNeoXAttention.__init__ = get_topk_init(top_k)
-    GPTNeoXAttention._attn = get_topk_attn(top_k)
+    GPTNeoXAttention.forward = get_top_k_forward(args)
+    GPTNeoXAttention.__init__ = get_topk_init(args)
+    GPTNeoXAttention._attn = get_topk_attn(args)

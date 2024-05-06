@@ -10,17 +10,16 @@ CATEGORY_TO_BASEFILE = {
 }
 
 class TensorSaver:
-    def __init__(self, output_dir, rank = 0):
+    def __init__(self, output_dir):
         self.output_dir = output_dir
         self.index_dict = {}
         self.last_idx = -1
-        self.rank = rank
         for category, basefile in CATEGORY_TO_BASEFILE.items():
             self.index_dict[category] = 0
 
     def save(self, category, tensor, extra_idx = None, extra_dir = ""):
         # Only save the tensor if the rank is 0
-        if self.rank != 0: 
+        if torch.distributed.get_rank() != 0:
             return
         # Print the first time the function is called
         if self.index_dict[category] == 0:
