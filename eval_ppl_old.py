@@ -8,8 +8,8 @@ from methods import (
   #make_gemma_attention_top_k
   make_gptneox_attention_top_k
 )
-from configure_model import get_h2o_args, get_topk_args, get_spar_args, get_pca_args, get_save_tensor_args
-from configure_model import get_modifier
+from methods.common.configure_model import get_h2o_args, get_topk_args, get_spar_args, get_pca_args, get_save_tensor_args
+from methods.common.configure_model import get_modifier
 
 from methods import SparHatCache
 import argparse

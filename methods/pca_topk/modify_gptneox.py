@@ -8,10 +8,11 @@ from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
-from .utils import mask_attn_pca_topk
+from .utils import mask_attn_pca_topk, get_pca_components
 import methods
+import os
 
-def get_pca_topk_init(top_r, top_k):
+def get_pca_topk_init(args):
     def modified_attention_init(self, config):
         super(GPTNeoXAttention, self).__init__()
         self.config = config
@@ -35,50 +36,10 @@ def get_pca_topk_init(top_r, top_k):
         self.is_causal = True
 
         self.layer_idx = methods.G_TENSOR_SAVER.get_layer_idx()
-
-        # Initialise PCA transforms
-        components_file_path = "/pscratch/sd/p/prajwal/InferenceData/Pythia-6.9B-PCA/wikitext/postrotary/key/pca_components/pca_components_layer_{}.pt".format(self.layer_idx)
-        mean_file_path = "/pscratch/sd/p/prajwal/InferenceData/Pythia-6.9B-PCA/wikitext/postrotary/key/pca_means/pca_means_layer_{}.pt".format(self.layer_idx)
-        explained_variance_file_path = "/pscratch/sd/p/prajwal/InferenceData/Pythia-6.9B-PCA/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{}.pt".format(self.layer_idx)
-
-        print ("Components File Path:", components_file_path)
-
-        # PCA Components with the shape (num_heads, head_dim, top_r)
-        self.pca_components = torch.load(components_file_path).to("cuda")
-
-        # PCA Means with the shape (num_heads, head_dim)
-        self.pca_means = torch.load(mean_file_path).to("cuda")
-
-        # Explained Variance with the shape (num_heads, head_dim)
-        self.pca_explained_variance = torch.load(explained_variance_file_path).to("cuda")
-
-        # Reshaping the components and taking a transpose to have components along the column dimension and means to be easily broadcastable over the keys
-        self.pca_components = self.pca_components.reshape(1, self.num_attention_heads, self.head_size, self.head_size).transpose(2, 3)
-        self.pca_means = self.pca_means.reshape(1, self.num_attention_heads, 1, self.head_size)
-
-        # Get the point where the explained variance is 95% per head
-        explained_variance_cumsum = self.pca_explained_variance.cumsum(-1)
-
-
-        if top_r < 1:
-            # Find the maximum index where the explained variance is 95% across all heads - Uncomment this line adaptively set the top_r:w
-            top_correct_r = (explained_variance_cumsum < top_r).sum(-1).max().item()
-
-        #    # Instead of sum, we use the median index 
-        #    #top_r = (explained_variance_cumsum < 0.95).sum(-1).median().item()
-        else:
-            top_correct_r = int(top_r)
-
-        # Only keep the top_r components of the pca_components
-        self.pca_components_r_key = self.pca_components[:, :, :, :top_correct_r]
-
-        print ("{}: PCA Components Shape: {}".format(self.layer_idx, self.pca_components_r_key.shape))
-        print ("{}: PCA Means Shape: {}".format(self.layer_idx, self.pca_means.shape))
-        print ("Compression Ratio: {}".format(top_correct_r / self.head_size))
     return modified_attention_init
 
 
-def get_pca_topk_attn(top_r, top_k):
+def get_pca_topk_attn(args):
     def modified_attn(self, query, key, value, attention_mask=None, head_mask=None):
         # q, k, v: [bs, num_attention_heads, seq_len, attn_head_size]
         # compute causal mask from causal mask buffer
@@ -89,6 +50,9 @@ def get_pca_topk_attn(top_r, top_k):
         if key_length > self.bias.shape[-1]:
             self._init_bias(key_length, device=key.device)
         causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
+
+        if not hasattr(self, "pca_components"):
+            self.pca_means, self.pca_components, self.pca_components_r_key = get_pca_components(args, self.layer_idx, self.head_size , args.top_r, self.num_attention_heads, None)
 
         self.pca_means = self.pca_means.to(key.dtype)
         self.pca_components_r_key = self.pca_components_r_key.to(key.dtype)
@@ -133,11 +97,11 @@ def get_pca_topk_attn(top_r, top_k):
             attention_mask = torch.where(causal_mask, torch.tensor(0.0).to(attn_scores.dtype), mask_value)
         
         # Get top-k attention weights
-        if top_k <= 1:
-            topk = int(top_k * attn_scores.shape[-1])
+        if args.top_k <= 1:
+            topk = int(args.top_k * attn_scores.shape[-1])
         else:
-            topk = int(top_k)
-        attn_scores, alpha = mask_attn_pca_topk(self.layer_idx, attn_scores, attention_mask, query, key, self.pca_components, self.pca_components_r_key, top_r, topk)
+            topk = int(args.top_k)
+        attn_scores, alpha = mask_attn_pca_topk(args, self.layer_idx, attn_scores, attention_mask, query, key, self.pca_components, self.pca_components_r_key, args.top_r, topk)
 
         attn_weights = nn.functional.softmax(attn_scores, dim=-1)
         attn_weights = attn_weights.to(value.dtype)
@@ -152,10 +116,10 @@ def get_pca_topk_attn(top_r, top_k):
         return attn_output, attn_weights
     return modified_attn
 
-def make_gptneox_attention_pca_topk(top_r, top_k):
+def make_gptneox_attention_pca_topk(args):
     print ("Modifying GPT NeoX Attention -> PCA TopK Attention")
-    print ("Top R:", top_r)
-    print ("Top K:", top_k)
+    print ("Top R:", args.top_r)
+    print ("Top K:", args.top_k)
     print ("Not using alpha")
-    GPTNeoXAttention.__init__ = get_pca_topk_init(top_r, top_k)
-    GPTNeoXAttention._attn = get_pca_topk_attn(top_r, top_k)
+    GPTNeoXAttention.__init__ = get_pca_topk_init(args)
+    GPTNeoXAttention._attn = get_pca_topk_attn(args)
