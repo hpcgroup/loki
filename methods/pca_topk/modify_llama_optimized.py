@@ -94,9 +94,9 @@ def get_pca_forward(args):
         if query_states.shape[-2] == 1:
             # Compute Approximate Attention Weights
             # We do not need a causal mask here since this is the generation step
-            attn_weights = torch.matmul(query_states[:,:,:,:args.top_r], key_states.transpose(2, 3)[:,:,:16,:]) / math.sqrt(self.head_dim)
+            attn_weights = torch.matmul(query_states[:,:,:,:args.top_r], key_states.transpose(2, 3)[:,:,:args.top_r,:]) / math.sqrt(self.head_dim)
 
-            key_states_topk_indices = torch.topk(attn_weights, args.topk, dim=-1).indices.to("cuda")
+            key_states_topk_indices = torch.topk(attn_weights, args.top_k, dim=-1).indices.to("cuda")
             key_states_topk_indices , _ = torch.sort(key_states_topk_indices, dim=-1)
             key_states_topk_indices = key_states_topk_indices.reshape(-1, key_states_topk_indices.shape[-1])
 
@@ -104,8 +104,8 @@ def get_pca_forward(args):
             query_states = query_states.reshape(-1, query_states.shape[-2], query_states.shape[-1])
 
             attn_weights = G.gather_outer_bmv(
-                query_states,
-                key_states.transpose(-1, -2),
+                query_states.contiguous(),
+                key_states.transpose(-1, -2).contiguous(),
                 key_states_topk_indices,
                 chunk=256 # Varying this changes performance
                 #chunk=min(k2, 65536 // Q.shape[-1]),
@@ -115,8 +115,8 @@ def get_pca_forward(args):
 
             value_states = value_states.reshape(-1, value_states.shape[-2], value_states.shape[-1])
             attn_output = G.gather_inner_matrix_only_bmv(
-              attn_weights, 
-              value_states, 
+              attn_weights.contiguous(), 
+              value_states.contiguous(), 
               key_states_topk_indices, 
               chunk=64
             )
