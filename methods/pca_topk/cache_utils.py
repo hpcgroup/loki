@@ -29,6 +29,7 @@ class PcaTopKCache(Cache): # Not used anymore
         #self.top_k = k
         #print (f"Cache initialized with top_r = {r}, top_k = {k}")
 
+    @torch.no_grad()
     def update(
         self,
         key_states: torch.Tensor,
@@ -243,26 +244,38 @@ def micro_bench_actual_attention(cache, prompt_keys, num_gen_steps=2000):
           matmul_time += end - start
     print (f"Matmul Time: {matmul_time}")
 
-def benchmark_attention():
-    # Change this to change batch size, etc.
-    prompt_keys = torch.rand(16, 32, 4096, 128).to("cuda")
+def benchmark_attention(batch_size=1,
+                        num_heads=32,
+                        num_gen_steps=128,
+                        prompt_length=3072,
+                        topk=256):
 
+    head_dim=128
+    # Change this to change batch size, etc.
+    prompt_keys = torch.rand(batch_size, num_heads, prompt_length, head_dim).to("cuda")
+
+
+    print("PCA TOPK Unoptimized")
     cache1 = PcaTopKCache()
     cache1.update(prompt_keys, prompt_keys, prompt_keys, 0)
-    micro_benchmark_pca_topk(cache1, prompt_keys, 32, 1024, num_gen_steps=2000)
+    micro_benchmark_pca_topk(cache1, prompt_keys, 32, topk, num_gen_steps=num_gen_steps)
+    del cache1
 
-
+    print("PCA TOPK Optimized")
     cache2 = PcaTopKCache()
     cache2.update(prompt_keys, prompt_keys, prompt_keys, 0)
-    micro_benchmark_pca_topk(cache2, prompt_keys, 32, 1024, num_gen_steps=2000, use_optimised_gather=True)
+    micro_benchmark_pca_topk(cache2, prompt_keys, 32, topk, num_gen_steps=num_gen_steps, use_optimised_gather=True)
+    del cache2
 
-
+    print("Actual Attention")
     cache3= PcaTopKCache()
     cache3.update(prompt_keys, prompt_keys, prompt_keys, 0)
-    micro_bench_actual_attention(cache3, prompt_keys, num_gen_steps=2000)
+    micro_bench_actual_attention(cache3, prompt_keys, num_gen_steps=num_gen_steps)
+    del cache3
 
 if __name__ == "__main__":
     #test_pcatopk_cache()
-    benchmark_attention()
+    with torch.no_grad():
+        benchmark_attention(prompt_length=512, num_gen_steps=16, batch_size=128, topk=128)
     
 
