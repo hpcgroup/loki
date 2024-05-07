@@ -61,7 +61,8 @@ def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, r
     print ("{}: PCA Means Shape: {}".format(layer_idx, pca_means.shape))
     print ("Compression Ratio: {}".format(top_correct_r / head_dim))
 
-    #methods.LOGGER.update_config({"Compression Ratio": top_correct_r / head_dim})
+    if methods.LOGGER is not None:
+        methods.LOGGER.update_config({"Compression Ratio": top_correct_r / head_dim})
 
     if AXONN_AVAILABLE and ax.is_initialized:
         print ("Dropping PCA Components and PCA Means")
@@ -79,10 +80,12 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
         top_r = head_dim
 
     # Default recent history = k / 4
-    if args.recent_ratio == -1:
-      l = 0
-    else:
-      l = int(args.recent_ratio * key_states.shape[-2])
+    
+    if hasattr(args, "recent_ratio"):
+        if args.recent_ratio == -1:
+          l = 0
+        else:
+          l = int(args.recent_ratio * key_states.shape[-2])
 
     # Transform key_states and query_states to PCA space
     #key_states_pca = torch.matmul(key_states, pca_comps_full).to(query_states.dtype)
@@ -98,7 +101,7 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
 
     scaling_factor = head_dim * torch.sqrt((torch.square(key_states_sparse).sum(-1 , keepdim=True) / torch.square(key_states_pca).sum(-1, keepdim = True)))
     scaling_factor = scaling_factor.transpose(-1, -2)
-    methods.LOGGER.update_config({"scaling_factor": "ratio-based"})
+    #methods.LOGGER.update_config({"scaling_factor": "ratio-based"})
 
     # Compute attention with the query_states and key_states_sparse
     attn_weights_s_hat = torch.matmul(query_states_sparse, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)

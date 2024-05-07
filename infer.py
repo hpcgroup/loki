@@ -12,7 +12,6 @@ from methods.common.configure_model import get_h2o_args, get_topk_args, get_spar
 from methods.common.configure_model import get_modifier
 from methods import init_logger, finish_logger
 import methods
-from methods.pca_topk.modify_llama_optimized import make_llama_attention_pca_topk 
 
 OKBLUE = '\033[94m'
 OKGREEN = '\033[92m'
@@ -41,6 +40,7 @@ def setup_parser():
     parser.add_argument("--prompt-length", type=int, default=1988, help="Batch Size")
     parser.add_argument("--gen-length", type=int, default=32, help="Batch Size")
     parser.add_argument("--seed", type=int, default=1234, help="Seed")
+    parser.add_argument("--use-optimized-code", action='store_true', default=False)
 
     return parser
 
@@ -62,9 +62,15 @@ if  __name__ == "__main__":
     set_seed(args.seed)
    
     if args.method == "pca-topk":
-        args.top_k = args.prompt_length #int(0.25 * args.prompt_length)
+        args.top_k = args.prompt_length
         args.top_r = 128
         args.rotary_type = "postrotary"
+
+        if args.use_optimized_code:
+            from methods.pca_topk.modify_llama_optimized import make_llama_attention_pca_topk
+        else:
+            from methods.pca_topk.modify_llama import make_llama_attention_pca_topk
+
         make_llama_attention_pca_topk(args)
 
     with parallelize(model_id):
