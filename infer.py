@@ -11,6 +11,7 @@ from methods.common.configure_model import get_h2o_args, get_topk_args, get_spar
 from methods.common.configure_model import get_modifier
 from methods import init_logger, finish_logger
 import methods
+from methods.pca_topk.modify_llama_optimized import make_llama_attention_pca_topk 
 
 OKBLUE = '\033[94m'
 OKGREEN = '\033[92m'
@@ -34,6 +35,11 @@ def set_seed(seed=123456):
 def setup_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-id", type=str, default="huggyllama/llama-7b", help="huggingface model to use")
+    parser.add_argument("--method", type=str, default="baseline", choices=["baseline", "pca-topk"], help="method")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch Size")
+    parser.add_argument("--prompt-length", type=int, default=1988, help="Batch Size")
+    parser.add_argument("--gen-length", type=int, default=32, help="Batch Size")
+
     return parser
 
 if  __name__ == "__main__":
@@ -44,15 +50,24 @@ if  __name__ == "__main__":
 
     init_everything()
     set_seed()
+   
+    if args.method == "pca-topk":
+        args.top_k = 512
+        args.top_r = 32
+        args.rotary_type = "prerotary"
+        make_llama_attention_pca_topk(args)
+
     with parallelize(model_id):
         model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype).to('cuda')
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 
-    with open("data/input.txt", "r") as f:
-        prompts = [p.strip() for p in f.readlines()]
-      
+    #with open("data/input.txt", "r") as f:
+    #    prompts = [p.strip() for p in f.readlines()]
+     
+    prompts = [["hi "* args.prompt_length ] for _ in range(args.batch_size)]
+
 
     total_generated_tokens = 0
     
@@ -65,7 +80,7 @@ if  __name__ == "__main__":
     for prompt in prompts:
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids
         with torch.autocast(device_type='cuda', dtype=dtype):
-            outputs = model.generate(input_ids.cuda(), do_sample=True, max_new_tokens=60, num_beams=4)
+            outputs = model.generate(input_ids.cuda(), do_sample=True, max_new_tokens=args.gen_length, num_beams=4)
 
         generated_tokens = outputs.numel() -  input_ids.numel()
         total_generated_tokens += generated_tokens
