@@ -4,18 +4,13 @@ import numpy as np
 from pca_topk import gather_outer_bmv_optimized, gather_inner_matrix_only_bmv_optimized
 from sparq import gather_outer_bmv, gather_inner_matrix_only_bmv
 
-
-B = 1
+B = 4
 NH = 32
-S = 500
+S = 800
 D = 128
 dtype = torch.float16
 
-print("===== BENCHMARKING s.v with various sparsities =======")
-print("Batch Size : ", B)
-print("Number of Heads : ", NH)
-print("Number of Key Tokens (or sequence length) : ", S)
-print("Hidden dimension per head : ", D)
+
 
 configs = [
     triton.testing.Benchmark(
@@ -25,7 +20,7 @@ configs = [
         # Possible values for `line_arg`
         # Don't compare to cublas for fp8 cases as torch.matmul doesn't support fp8 at the moment.
         line_vals=["torch", "triton-optimized"],  # Label name for the lines
-        line_names=["torch (full keys)", "Triton (Optimized)"],  # Line styles
+        line_names=["torch (full keys and values)", "Triton (Optimized)"],  # Line styles
         styles=[("black", "-"), ("blue", "-")],
         ylabel="TFLOPS",  # Label name for the y-axis
         plot_name="matmul-performance-" + ("fp16 (time in ms)" ),  # Name for the plot, used also as a file name for saving the plot.
@@ -72,7 +67,22 @@ def benchmark_bmm2(sparsity, B, NH, S, D, provider):
 
     return ms, max_ms, min_ms
 
+
+
+print("===== BENCHMARKING q@k.t() with various sparsities =======")
+print("Batch Size : ", B)
+print("Number of Heads : ", NH)
+print("Number of Key Tokens (or sequence length) : ", S)
+print("Hidden dimension per head : ", D)
+result = benchmark_bmm1.run(print_data=True)
+
+
+
+print("===== BENCHMARKING s@v with various sparsities =======")
+print("Batch Size : ", B)
+print("Number of Heads : ", NH)
+print("Number of Key Tokens (or sequence length) : ", S)
+print("Hidden dimension per head : ", D)
 result = benchmark_bmm2.run(print_data=True)
 
-print(result)
 
