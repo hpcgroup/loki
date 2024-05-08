@@ -1,17 +1,17 @@
 import torch
 import triton
 import numpy as np
-from pca_topk import gather_outer_bmv_optimized
-from sparq import gather_outer_bmv
+from pca_topk import gather_outer_bmv_optimized, gather_inner_matrix_only_bmv_optimized
+from sparq import gather_outer_bmv, gather_inner_matrix_only_bmv
 
 
-B = 16
+B = 1
 NH = 32
-S = 1024
+S = 500
 D = 128
 dtype = torch.float16
 
-print("===== BENCHMARKING q.k.t() with various sparsities =======")
+print("===== BENCHMARKING s.v with various sparsities =======")
 print("Batch Size : ", B)
 print("Number of Heads : ", NH)
 print("Number of Key Tokens (or sequence length) : ", S)
@@ -24,9 +24,9 @@ configs = [
         line_arg="provider",  # Argument name whose value corresponds to a different line in the plot
         # Possible values for `line_arg`
         # Don't compare to cublas for fp8 cases as torch.matmul doesn't support fp8 at the moment.
-        line_vals=["torch", "triton-optimized", "triton-sparq"],  # Label name for the lines
-        line_names=["torch (full keys)", "Triton (Optimized)", "Triton (SparQ)"],  # Line styles
-        styles=[("black", "-"), ("blue", "-"), ("red", "-")],
+        line_vals=["torch", "triton-optimized"],  # Label name for the lines
+        line_names=["torch (full keys)", "Triton (Optimized)"],  # Line styles
+        styles=[("black", "-"), ("blue", "-")],
         ylabel="TFLOPS",  # Label name for the y-axis
         plot_name="matmul-performance-" + ("fp16 (time in ms)" ),  # Name for the plot, used also as a file name for saving the plot.
         args = {"B": B, "NH" : NH, "S": S, "D": D}
@@ -35,7 +35,7 @@ configs = [
 
 
 @triton.testing.perf_report(configs)
-def benchmark(sparsity, B, NH, S, D, provider):
+def benchmark_bmm1(sparsity, B, NH, S, D, provider):
     q = torch.randn((B*NH, 1, D), device='cuda', dtype=dtype)
     k = torch.randn((B*NH, S, D), device='cuda', dtype=dtype)
     choice = np.concatenate([np.sort(np.random.choice(S, size=(int(S*sparsity)), replace=False)) for _ in range(B*NH)]).reshape(B*NH, -1)
@@ -52,8 +52,27 @@ def benchmark(sparsity, B, NH, S, D, provider):
     #return perf(ms), perf(max_ms), perf(min_ms)
     return ms, max_ms, min_ms
 
+@triton.testing.perf_report(configs)
+def benchmark_bmm2(sparsity, B, NH, S, D, provider):
+    k_seq_len = S
+    scores_sampled = torch.randn( (B*NH, 1, int(k_seq_len*sparsity)), device='cuda', dtype=dtype)
+    scores = torch.randn( (B*NH, 1, k_seq_len), device='cuda', dtype=dtype)
 
-result = benchmark.run(print_data=True)
+    v = torch.randn((B*NH, k_seq_len, D), device='cuda', dtype=dtype)
+    choice = np.concatenate([np.sort(np.random.choice(S, size=(int(k_seq_len*sparsity)), replace=False)) for _ in range(B*NH)]).reshape(B*NH, -1)
+    token_mask = torch.tensor(choice, device="cuda")
+
+    quantiles = [0.5, 0.2, 0.8]
+    if provider == 'torch':
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch.bmm(scores, v), quantiles=quantiles)
+    if provider == 'triton-optimized':
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: gather_inner_matrix_only_bmv_optimized(scores_sampled, v, token_mask), quantiles=quantiles)
+    if provider == 'triton-sparq':
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: gather_inner_matrix_only_bmv(scores_sampled, v, token_mask, chunk=256), quantiles=quantiles)
+
+    return ms, max_ms, min_ms
+
+result = benchmark_bmm2.run(print_data=True)
 
 print(result)
 
