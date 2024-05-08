@@ -6,7 +6,7 @@ import triton
 import triton.language as tl
 from torch import Tensor
 
-def get_autotune_config():
+def get_autotune_config_outer():
   return [
     triton.Config({"n_chunk": 4}),
     triton.Config({"n_chunk": 8}),
@@ -20,7 +20,7 @@ def get_autotune_config():
   ]
 
 @triton.autotune(
-    configs=get_autotune_config(),
+    configs=get_autotune_config_outer(),
     key=['b', 'n', 'k'],
 )
 @triton.jit
@@ -110,8 +110,18 @@ def gather_outer_bmv_optimized(A: Tensor, B: Tensor, I: Tensor) -> Tensor:
     return Y
 
 
+def get_autotune_config_inner():
+  return [
+    triton.Config({"n_chunk": 4}),
+    triton.Config({"n_chunk": 8}),
+    triton.Config({"n_chunk": 16}),
+    triton.Config({"n_chunk": 32}),
+    triton.Config({"n_chunk": 64}),
+    triton.Config({"n_chunk": 128}),
+  ]
+
 @triton.autotune(
-    configs=get_autotune_config(),
+    configs=get_autotune_config_inner(),
     key=['b', 'n', 'k'],
 )
 @triton.jit
