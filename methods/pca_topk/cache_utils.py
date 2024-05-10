@@ -178,7 +178,7 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_gen_steps=200
                 #.squeeze(0).squeeze(-1),
                 chunk=256
                 #chunk=min(k2, 65536 // Q.shape[-1]),
-            )
+            ) / math.sqrt(head_dim)
             attn_weights = torch.softmax(attn_weights, dim=-1)
 
             attn_output = G.gather_inner_matrix_only_bmv(
@@ -276,6 +276,6 @@ def benchmark_attention(batch_size=1,
 if __name__ == "__main__":
     #test_pcatopk_cache()
     with torch.no_grad():
-        benchmark_attention(prompt_length=512, num_gen_steps=16, batch_size=128, topk=128)
+        benchmark_attention(prompt_length=4096, num_gen_steps=2000, batch_size=16, topk=1024)
     
 

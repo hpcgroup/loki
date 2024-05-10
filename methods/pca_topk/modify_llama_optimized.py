@@ -76,9 +76,9 @@ def get_pca_forward(args):
 
             # TODO: Keep it fixed or make it dynamic?
             if args.top_k <= 1:
-                args.top_k = int(args.top_k * key_states.shape[-2])
+                self.top_k = int(args.top_k * key_states.shape[-2])
             else:
-                args.top_k = int(args.top_k)
+                self.top_k = int(args.top_k)
 
         key_states = torch.matmul(key_states, self.pca_components)
         query_states = torch.matmul(query_states, self.pca_components)
@@ -96,7 +96,7 @@ def get_pca_forward(args):
             # We do not need a causal mask here since this is the generation step
             attn_weights = torch.matmul(query_states[:,:,:,:args.top_r], key_states.transpose(2, 3)[:,:,:args.top_r,:]) / math.sqrt(self.head_dim)
 
-            key_states_topk_indices = torch.topk(attn_weights, args.top_k, dim=-1).indices.to("cuda")
+            key_states_topk_indices = torch.topk(attn_weights, self.top_k, dim=-1).indices.to("cuda")
             key_states_topk_indices , _ = torch.sort(key_states_topk_indices, dim=-1)
             key_states_topk_indices = key_states_topk_indices.reshape(-1, key_states_topk_indices.shape[-1])
 
@@ -109,7 +109,8 @@ def get_pca_forward(args):
                 key_states_topk_indices,
                 chunk=256 # Varying this changes performance
                 #chunk=min(k2, 65536 // Q.shape[-1]),
-            )
+            ) / math.sqrt(self.head_dim)
+
             attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
             attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
 

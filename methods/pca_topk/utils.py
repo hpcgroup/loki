@@ -104,7 +104,8 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
 
     # Compute attention with the query_states and key_states_sparse
     attn_weights_s_hat = torch.matmul(query_states_sparse, key_states_sparse.transpose(-1, -2)) / math.sqrt(head_dim)
-    methods.LOGGER.update_config({"scaling_factor": "fixed"})
+    if methods.LOGGER is not None:
+        methods.LOGGER.update_config({"scaling_factor": "fixed"})
     if attention_mask is not None:  # no matter the length, we just slice it
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
         attn_weights_s_hat = attn_weights_s_hat + causal_mask
