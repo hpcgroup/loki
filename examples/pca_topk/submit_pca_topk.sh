@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --qos=regular
-#SBATCH --constraint=gpu
+#SBATCH --constraint=gpu&hbm80g
 #SBATCH -N 1
-#SBATCH --gpus-per-node=1
+#SBATCH --gpus-per-node=4
 #SBATCH --account=m4641_g
-#SBATCH --ntasks-per-node=1
-#SBATCH --time=01:30:00
+#SBATCH --ntasks-per-node=4
+#SBATCH --time=02:30:00
 #SBATCH -J pca_topk
 #SBATCH --output=outfiles/%x-%j.out
 
@@ -37,6 +37,10 @@ export HF_HOME=${HF_HOME:-"$SCRATCH/hf_cache"}
 export TRANSFORMERS_HOME=${TRANSFORMERS_HOME:-"$SCRATCH/hf_cache"}
 export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-"$SCRATCH/hf_cache"}
 
+export WANDB_DIR="$SCRATCH/InferenceData/wandb"
+export WANDB_CACHE_DIR="$SCRATCH/.cache/wandb"
+export WANDB_CONFIG_DIR="$SCRATCH/.cache/wandb_config"
+
 MODEL=$1
 MODEL_TYPE=$2
 SEQ_LEN=$3
@@ -44,7 +48,7 @@ MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
 TOPR=$4
 TOPK=$5
 EVAL=$6
-WANDB=false
+WANDB=true
 
 OUT_FILE_PATH="experiments/exp-pca-topk/${MODEL_NAME}"
 mkdir -p $OUT_FILE_PATH
@@ -64,6 +68,11 @@ run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-n
         --model-id ${MODEL} --model-type ${MODEL_TYPE}\
         ${WANDB_ARGS}\
         --use-pca-topk --top-r ${TOPR} --top-k ${TOPK} ${EVAL} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}_${TOPK}${EVAL}.out 2>&1"
+
+#run_cmd="srun -N 1 ./set_env_vars_slurm.sh python -u eval_ppl.py --use-axonn --sequence-length ${SEQ_LEN}\
+#        --model-id ${MODEL} --model-type ${MODEL_TYPE}\
+#        ${WANDB_ARGS}\
+#        --use-pca-topk --top-r ${TOPR} --top-k ${TOPK} ${EVAL} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}_${TOPK}${EVAL}.out 2>&1"
 
 
 echo ${run_cmd}

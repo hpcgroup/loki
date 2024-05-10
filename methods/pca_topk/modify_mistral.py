@@ -4,6 +4,7 @@ import math
 import warnings
 from transformers.models.mistral.modeling_mistral import MistralAttention, repeat_kv, apply_rotary_pos_emb, MistralRotaryEmbedding
 from transformers.models.mistral.configuration_mistral import MistralConfig
+from transformers.models.mixtral.modeling_mixtral import MixtralAttention
 from transformers.cache_utils import Cache
 import torch
 from torch import nn
@@ -131,7 +132,8 @@ def get_pca_forward(args):
     return modified_forward
 
 def make_mistral_attention_pca_topk(args):
-    print ("Modifying Mistral Attention -> PCA Attention")
+    print ("Modifying Mistral & Mixtral Attention -> PCA Attention")
     print ("Top R:", args.top_r)
     print ("Top K:", args.top_k)
     MistralAttention.forward = get_pca_forward(args)
+    MixtralAttention.forward = get_pca_forward(args)

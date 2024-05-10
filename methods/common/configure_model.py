@@ -62,6 +62,8 @@ def get_modifier(args):
 
 def get_config_dict(args):
     config_dict = {}
+    config_dict["model"] = args.model_id
+    config_dict["sequence_length"] = args.sequence_length
     if args.use_h2o:
         config_dict["method"] = "h2o"
         config_dict["heavy_ratio"] = args.heavy_ratio
