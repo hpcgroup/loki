@@ -101,10 +101,10 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
 
     scaling_factor = head_dim * torch.sqrt((torch.square(key_states_sparse).sum(-1 , keepdim=True) / torch.square(key_states_pca).sum(-1, keepdim = True)))
     scaling_factor = scaling_factor.transpose(-1, -2)
-    #methods.LOGGER.update_config({"scaling_factor": "ratio-based"})
 
     # Compute attention with the query_states and key_states_sparse
-    attn_weights_s_hat = torch.matmul(query_states_sparse, key_states_sparse.transpose(-1, -2)) / torch.sqrt(scaling_factor)
+    attn_weights_s_hat = torch.matmul(query_states_sparse, key_states_sparse.transpose(-1, -2)) / math.sqrt(head_dim)
+    methods.LOGGER.update_config({"scaling_factor": "fixed"})
     if attention_mask is not None:  # no matter the length, we just slice it
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
         attn_weights_s_hat = attn_weights_s_hat + causal_mask

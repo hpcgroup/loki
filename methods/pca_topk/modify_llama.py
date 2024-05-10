@@ -124,9 +124,9 @@ def get_pca_forward(args):
             )
 
         # Compute cumulative sum along the desired dimension
-        cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
+        # cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
         # Compute the cumulative mean along the desired dimension
-        cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
+        # cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
 
         # Compute cumulative sum along the desired dimension
         #cumulative_sum = torch.cumsum(value_states, dim=2).cuda()

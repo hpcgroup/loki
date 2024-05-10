@@ -129,8 +129,8 @@ def get_top_k_forward(args):
 
         if methods.G_TENSOR_SAVER is not None:
             methods.G_TENSOR_SAVER.save("key", key, self.layer_idx, "prerotary")
-            methods.G_TENSOR_SAVER.save("query", query, self.layer_idx, "prerotary")
-            methods.G_TENSOR_SAVER.save("value", value, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("query", query, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("value", value, self.layer_idx, "prerotary")
 
         # Compute rotary embeddings on rotary_ndims
         query_rot = query[..., : self.rotary_ndims]
@@ -164,7 +164,7 @@ def get_top_k_forward(args):
 
         if methods.G_TENSOR_SAVER is not None:
             methods.G_TENSOR_SAVER.save("key", key, self.layer_idx, "postrotary")
-            methods.G_TENSOR_SAVER.save("query", query, self.layer_idx, "postrotary")
+            #methods.G_TENSOR_SAVER.save("query", query, self.layer_idx, "postrotary")
 
         outputs = (attn_output, present)
         if output_attentions:
