@@ -2,3 +2,5 @@ experiments/**
 outfiles/**
 text_generation/
 **/__pycache__/
+wandb/**
+methods/baselines/topk/bce928f38989812b69c6f8e3a86763e004387d16/**

@@ -3,7 +3,6 @@ from importlib import import_module
 def get_h2o_args(parser):
     parser.add_argument("--use-h2o", action='store_true', default=False, help="use the H2O algos")
     parser.add_argument("--heavy-ratio", type=float, default=0.1, help="H2O heavy ratio," "set to 0.1 by default")
-    parser.add_argument("--recent-ratio", type=float, default=0.1, help="H2O recent ratio," "set to 0.1 by default")
     return parser
 
 def get_topk_args(parser):
@@ -21,6 +20,8 @@ def get_spar_args(parser):
 def get_pca_args(parser):
     parser.add_argument("--use-pca", action='store_true', default=False, help="use the PCA algos")
     parser.add_argument("--use-pca-topk", action='store_true', default=False, help="use the PCA TopK algos")
+    parser.add_argument("--rotary-type", type=str, default="postrotary", help="rotary type")
+    parser.add_argument("--recent-ratio", type=float, default=-1, help="PcaTopK recent ratio," "set to -1 by default")
     return parser
 
 def get_save_tensor_args(parser):
@@ -58,3 +59,35 @@ def get_modifier(args):
     module = import_module(module_name, package="methods")
     method = getattr(module, method_name)
     return method
+
+def get_config_dict(args):
+    config_dict = {}
+    config_dict["model"] = args.model_id
+    config_dict["sequence_length"] = args.sequence_length
+    if args.use_h2o:
+        config_dict["method"] = "h2o"
+        config_dict["heavy_ratio"] = args.heavy_ratio
+    elif args.use_topk:
+        config_dict["method"] = "topk"
+        config_dict["top_k"] = args.top_k
+    elif args.use_spark:
+        config_dict["method"] = "spark"
+        config_dict["top_r"] = args.top_r
+        config_dict["top_k"] = args.top_k
+    elif args.use_sparq:
+        config_dict["method"] = "sparq"
+        config_dict["top_r"] = args.top_r
+        config_dict["top_k"] = args.top_k
+    elif args.use_spar_hat:
+        config_dict["method"] = "spar_hat"
+        config_dict["top_r"] = args.top_r
+    elif args.use_pca:
+        config_dict["method"] = "pca"
+        config_dict["top_r"] = args.top_r
+    elif args.use_pca_topk:
+        config_dict["method"] = "pca_topk"
+        config_dict["top_r"] = args.top_r
+        config_dict["top_k"] = args.top_k
+        config_dict["rotary_type"] = args.rotary_type
+        config_dict["recent_ratio"] = args.recent_ratio
+    return config_dict

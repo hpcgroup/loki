@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from functools import partial
 
 from .utils import mask_attn_pca_topk, get_pca_components
+import methods.pca_topk.external.gather_matmul as G
 import methods
 
 
@@ -37,8 +38,6 @@ def get_pca_forward(args):
                 "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
             )
 
-        if not hasattr(self, "pca_components"):
-            self.pca_means, self.pca_components, self.pca_components_r_key = get_pca_components(args, self.layer_idx, self.head_dim, args.top_r, self.num_key_value_groups, repeat_kv)
         bsz, q_len, _ = hidden_states.size()
 
         if self.config.pretraining_tp > 1:
@@ -71,6 +70,19 @@ def get_pca_forward(args):
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
+        if not hasattr(self, "pca_components"):
+            _, self.pca_components, _= get_pca_components(args, self.layer_idx, self.head_dim, args.top_r, self.num_key_value_groups, repeat_kv)
+            self.pca_components = self.pca_components.to(query_states.dtype)
+
+            # TODO: Keep it fixed or make it dynamic?
+            if args.top_k <= 1:
+                self.top_k = int(args.top_k * key_states.shape[-2])
+            else:
+                self.top_k = int(args.top_k)
+
+        key_states = torch.matmul(key_states, self.pca_components)
+        query_states = torch.matmul(query_states, self.pca_components)
+
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
@@ -78,64 +90,50 @@ def get_pca_forward(args):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        #attn_weights = (torch.matmul(query_states, key_states.transpose(2, 3))) / math.sqrt(self.head_dim)
+        # Generation Step
+        if query_states.shape[-2] == 1:
+            # Compute Approximate Attention Weights
+            # We do not need a causal mask here since this is the generation step
+            attn_weights = torch.matmul(query_states[:,:,:,:args.top_r], key_states.transpose(2, 3)[:,:,:args.top_r,:]) / math.sqrt(self.head_dim)
 
-        #print ("Attn Weights DType:", attn_weights.dtype)
+            key_states_topk_indices = torch.topk(attn_weights, self.top_k, dim=-1).indices.to("cuda")
+            key_states_topk_indices , _ = torch.sort(key_states_topk_indices, dim=-1)
+            key_states_topk_indices = key_states_topk_indices.reshape(-1, key_states_topk_indices.shape[-1])
 
-        self.pca_means = self.pca_means.to(key_states.dtype)
-        self.pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
-        self.pca_components = self.pca_components.to(key_states.dtype)
+            key_states = key_states.reshape(-1, key_states.shape[-2], key_states.shape[-1])
+            query_states = query_states.reshape(-1, query_states.shape[-2], query_states.shape[-1])
 
+            attn_weights = G.gather_outer_bmv(
+                query_states.contiguous(),
+                key_states.transpose(-1, -2).contiguous(),
+                key_states_topk_indices,
+                chunk=256 # Varying this changes performance
+                #chunk=min(k2, 65536 // Q.shape[-1]),
+            ) / math.sqrt(self.head_dim)
 
-        key_states_pca  = torch.matmul(key_states, self.pca_components)
-        query_states_pca = torch.matmul(query_states, self.pca_components)
-        attn_weights = (torch.matmul(query_states_pca, key_states_pca.transpose(2, 3))) / math.sqrt(self.head_dim)
-        
-        #print ("Attn Weights DType:", attn_weights.dtype)
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
 
-        if attention_mask is not None:  # no matter the length, we just slice it
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
-
-        pca_means = self.pca_means.to(key_states.dtype)
-        pca_components_r_key = self.pca_components_r_key.to(key_states.dtype)
-        pca_components = self.pca_components.to(key_states.dtype)
-
-        if args.top_k <= 1:
-            topk = int(args.top_k * attn_weights.shape[-1])
-        else:
-            topk = int(args.top_k)
-        attn_weights, alpha = mask_attn_pca_topk(args, self.layer_idx, attn_weights, attention_mask, query_states, key_states, pca_components, pca_components_r_key, args.top_r, topk)
-
-
-        assert alpha is not None, "alpha is None"
-
-        #print ("Alpha:", alpha.dtype)
-
-        # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
-        attn_output = torch.matmul(attn_weights, value_states)
-
-        if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
+            value_states = value_states.reshape(-1, value_states.shape[-2], value_states.shape[-1])
+            attn_output = G.gather_inner_matrix_only_bmv(
+              attn_weights.contiguous(), 
+              value_states.contiguous(), 
+              key_states_topk_indices, 
+              chunk=64
             )
+            attn_output = attn_output.reshape(bsz, self.num_heads, q_len, self.head_dim)
+        else:
+            # Compute Standard Attention
+            attn_weights = (torch.matmul(query_states, key_states.transpose(2, 3))) / math.sqrt(self.head_dim)
+        
+            if attention_mask is not None:  # no matter the length, we just slice it
+                causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+                attn_weights = attn_weights + causal_mask
 
-        # Compute cumulative sum along the desired dimension
-        # cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
-        # Compute the cumulative mean along the desired dimension
-        # cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
-
-        # Compute cumulative sum along the desired dimension
-        #cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
-
-        ## Compute the cumulative mean along the desired dimension
-        #cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
-
-        #attn_output = ((1 - alpha) * cumulative_mean) + alpha * attn_output
-        #attn_output = attn_output.to(query_states.dtype)
+            # upcast attention to fp32
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+            attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -164,5 +162,7 @@ def make_llama_attention_pca_topk(args):
     print ("Modifying Llama Attention -> PCA TopK Attention")
     print ("Top R:", args.top_r)
     print ("Top K:", args.top_k)
+    #if args.optimised:
+    print ("Optimised PCA TopK Attention")
     #LlamaAttention.__init__ = get_pca_init(top_r, top_k)
     LlamaAttention.forward = get_pca_forward(args)

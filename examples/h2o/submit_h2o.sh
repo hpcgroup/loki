@@ -1,11 +1,14 @@
 #!/bin/bash
 #SBATCH --qos=regular
-#SBATCH --constraint=gpu
+#SBATCH --constraint=gpu&hbm80g
 #SBATCH -N 1
-#SBATCH --gpus-per-node=1
+#SBATCH --gpus-per-node=4
 #SBATCH --account=m4641_g
-#SBATCH --ntasks-per-node=1
-#SBATCH --time=10:00:00
+#SBATCH --ntasks-per-node=4
+#SBATCH --time=03:00:00
+#SBATCH -J h2o
+#SBATCH --output=outfiles/%x-%j.out
+
 
 
 # Runs a "10B" parameter model
@@ -14,7 +17,7 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 
 NNODES=$SLURM_JOB_NUM_NODES
-GPUS=$(( NNODES * 1 ))
+GPUS=$(( NNODES * 4 ))
 export MASTER_ADDR=$(hostname)
 export MASTER_PORT=29500
 export CUDA_DEVICE_MAX_CONNECTIONS=1
@@ -38,7 +41,6 @@ MODEL_TYPE=$2
 SEQ_LEN=$3
 MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
 R=$4
-EVAL=$5
 
 OUT_FILE_PATH="experiments/exp-h2o/${MODEL_NAME}"
 mkdir -p $OUT_FILE_PATH
@@ -49,7 +51,7 @@ echo "Sequence Length: ${SEQ_LEN}"
 echo "Output Path: ${OUT_FILE_PATH}"
 echo "Running model ${MODEL} with heavy ratio ${R}"
 
-run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_ppl.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-h2o --heavy-ratio ${R} ${EVAL}| tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${R}${EVAL}.out 2>&1"
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_ppl.py --sequence-length ${SEQ_LEN} --model-id ${MODEL} --model-type ${MODEL_TYPE} --use-axonn --use-h2o --heavy-ratio ${R} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${R}.out 2>&1"
 
 echo ${run_cmd}
 eval ${run_cmd}

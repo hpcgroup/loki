@@ -11,7 +11,7 @@ from functools import partial
 from methods.common.utils import mask_attn_top_k
 import methods
 
-def get_topk_init(top_k):
+def get_topk_init(args):
     def modified_attention_init(self, config):
         super(GPTNeoXAttention, self).__init__()
         self.config = config
@@ -38,8 +38,67 @@ def get_topk_init(top_k):
     return modified_attention_init
 
 
+def get_topk_attn(args):
+    def modified_attn(self, query, key, value, attention_mask=None, head_mask=None):
+        # q, k, v: [bs, num_attention_heads, seq_len, attn_head_size]
+        # compute causal mask from causal mask buffer
+        batch_size, num_attention_heads, query_length, attn_head_size = query.size()
+        key_length = key.size(-2)
 
-def get_top_k_forward(top_k, use_percentage=False):
+        # dynamically increase the causal mask with the key length, if needed.
+        if key_length > self.bias.shape[-1]:
+            self._init_bias(key_length, device=key.device)
+        causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
+
+        query = query.view(batch_size * num_attention_heads, query_length, attn_head_size)
+        key = key.view(batch_size * num_attention_heads, key_length, attn_head_size)
+        attn_scores = torch.zeros(
+            batch_size * num_attention_heads,
+            query_length,
+            key_length,
+            dtype=query.dtype,
+            device=key.device,
+        )
+        attn_scores = torch.baddbmm(
+            attn_scores,
+            query,
+            key.transpose(1, 2),
+            beta=1.0,
+            alpha=self.norm_factor,
+        )
+        attn_scores = attn_scores.view(batch_size, num_attention_heads, query_length, key_length)
+
+        mask_value = torch.finfo(attn_scores.dtype).min
+        # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
+        # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
+        mask_value = torch.tensor(mask_value, dtype=attn_scores.dtype).to(attn_scores.device)
+        attn_scores = torch.where(causal_mask, attn_scores, mask_value)
+
+        if attention_mask is not None:
+            # Apply the attention mask
+            attn_scores = attn_scores + attention_mask
+        
+        # Get top-k attention weights
+        if args.top_k <= 1:
+            topk = int(args.top_k * attn_scores.shape[-1])
+        else:
+            topk = int(args.top_k)
+        attn_scores = mask_attn_top_k(attn_scores, topk, dim=-1)
+
+        attn_weights = nn.functional.softmax(attn_scores, dim=-1)
+        attn_weights = attn_weights.to(value.dtype)
+
+        # Mask heads if we want to
+        if head_mask is not None:
+            attn_weights = attn_weights * head_mask
+
+        attn_weights = self.attention_dropout(attn_weights)
+
+        attn_output = torch.matmul(attn_weights, value)
+        return attn_output, attn_weights
+    return modified_attn
+
+def get_top_k_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.FloatTensor,
@@ -70,8 +129,8 @@ def get_top_k_forward(top_k, use_percentage=False):
 
         if methods.G_TENSOR_SAVER is not None:
             methods.G_TENSOR_SAVER.save("key", key, self.layer_idx, "prerotary")
-            methods.G_TENSOR_SAVER.save("query", query, self.layer_idx, "prerotary")
-            methods.G_TENSOR_SAVER.save("value", value, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("query", query, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("value", value, self.layer_idx, "prerotary")
 
         # Compute rotary embeddings on rotary_ndims
         query_rot = query[..., : self.rotary_ndims]
@@ -99,15 +158,13 @@ def get_top_k_forward(top_k, use_percentage=False):
         # Compute attention
         attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
 
-        # TODO: Implement top-k scheme
-
         # Reshape outputs
         attn_output = self._merge_heads(attn_output, self.num_attention_heads, self.head_size)
         attn_output = self.dense(attn_output)
 
         if methods.G_TENSOR_SAVER is not None:
             methods.G_TENSOR_SAVER.save("key", key, self.layer_idx, "postrotary")
-            methods.G_TENSOR_SAVER.save("query", query, self.layer_idx, "postrotary")
+            #methods.G_TENSOR_SAVER.save("query", query, self.layer_idx, "postrotary")
 
         outputs = (attn_output, present)
         if output_attentions:
@@ -116,12 +173,13 @@ def get_top_k_forward(top_k, use_percentage=False):
         return outputs
     return modified_forward
 
-def make_gptneox_attention_top_k(top_k, use_percentage=False):
+def make_gptneox_attention_top_k(args):
     print ("Modifying GPT Neo X Attention -> TopK Attention")
-    if not use_percentage:
-        print (f"TopK - {top_k}")
+    if args.top_k <= 1:
+        print (f"TopK - {args.top_k} (Percentage)")
     else:
-        print (f"TopK% - {top_k}")
+        print (f"TopK - {args.top_k}")
 
-    GPTNeoXAttention.forward = get_top_k_forward(top_k, use_percentage)
-    GPTNeoXAttention.__init__ = get_topk_init(top_k)
+    GPTNeoXAttention.forward = get_top_k_forward(args)
+    GPTNeoXAttention.__init__ = get_topk_init(args)
+    GPTNeoXAttention._attn = get_topk_attn(args)

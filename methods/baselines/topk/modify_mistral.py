@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple, Union
 import math
 import warnings
 from transformers.models.mistral.modeling_mistral import MistralAttention, repeat_kv, apply_rotary_pos_emb
+from transformers.models.mixtral.modeling_mixtral import MixtralAttention
 from transformers.cache_utils import Cache
 import torch
 from torch import nn
@@ -12,7 +13,7 @@ from functools import partial
 from methods.common.utils import mask_attn_top_k
 import methods
 
-def get_top_k_forward(top_k):
+def get_top_k_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -39,8 +40,8 @@ def get_top_k_forward(top_k):
 
         if methods.G_TENSOR_SAVER is not None:
             methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
-            methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
-            methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
+            #methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
@@ -60,7 +61,7 @@ def get_top_k_forward(top_k):
 
         if methods.G_TENSOR_SAVER is not None:
             methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "postrotary")
-            methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
+            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
 
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -84,10 +85,10 @@ def get_top_k_forward(top_k):
             attn_weights = attn_weights + attention_mask
 
         # Get top-k attention weights
-        if top_k <= 1:
-            topk = int(top_k * attn_weights.shape[-1])
+        if args.top_k <= 1:
+            topk = int(args.top_k * attn_weights.shape[-1])
         else:
-            topk = int(top_k)
+            topk = int(args.top_k)
         attn_weights = mask_attn_top_k(attn_weights, topk, dim=-1)
         
         # upcast attention to fp32
@@ -113,11 +114,12 @@ def get_top_k_forward(top_k):
     return modified_forward
 
 # TODO: Remove use_percentage
-def make_mistral_attention_top_k(top_k, use_percentage=False):
-    print ("Modifying Mistral Attention -> TopK Attention")
-    if not use_percentage:
-        print (f"TopK - {top_k}")
+def make_mistral_attention_top_k(args):
+    print ("Modifying Mistral and Mixtral Attention -> TopK Attention")
+    if args.top_k <= 1:
+        print (f"TopK% - {args.top_k}")
     else:
-        print (f"TopK% - {top_k}")
+        print (f"TopK - {args.top_k}")
 
-    MistralAttention.forward = get_top_k_forward(top_k)
+    MistralAttention.forward = get_top_k_forward(args)
+    MixtralAttention.forward = get_top_k_forward(args)

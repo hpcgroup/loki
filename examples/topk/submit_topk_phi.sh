@@ -14,7 +14,7 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 
 NNODES=$SLURM_JOB_NUM_NODES
-GPUS=$(( NNODES * 4 ))
+GPUS=$(( NNODES * 1 ))
 export MASTER_ADDR=$(hostname)
 export MASTER_PORT=29500
 export CUDA_DEVICE_MAX_CONNECTIONS=1
@@ -29,7 +29,6 @@ export FI_CXI_RDZV_GET_MIN=0
 export FI_CXI_OFLOW_BUF_SIZE=1073741824
 export FI_CXI_OFLOW_BUF_COUNT=1
 
-
 export HF_HOME="$SCRATCH/hf_cache"
 export TRANSFORMERS_HOME="$SCRATCH/hf_cache"
 export HF_DATASETS_CACHE="$SCRATCH/hf_cache"
@@ -39,13 +38,14 @@ MODEL_TYPE=$2
 SEQ_LEN=$3
 MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
 TOPK=$4
-EVAL=$5
+DATASET=$5
+EVAL=$6
 SAVE=true
 
 OUT_FILE_PATH="experiments/exp-topk/${MODEL_NAME}"
 mkdir -p $OUT_FILE_PATH
 
-OUT_TENSOR_DATA_PATH="${SCRATCH}/InferenceData/topk/${MODEL_NAME}/${TOPK}/wikitext/"
+OUT_TENSOR_DATA_PATH="${SCRATCH}/InferenceData/topk/${MODEL_NAME}/${TOPK}/${DATASET}/"
 mkdir -p $OUT_TENSOR_DATA_PATH
 
 echo "Model: ${MODEL}"
@@ -59,9 +59,10 @@ if [ "$SAVE" = true ]; then
   SAVE_ARGS="--save-tensors --tensors-dir ${OUT_TENSOR_DATA_PATH}"
 fi
 
-run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh python -u eval_ppl.py --use-axonn --sequence-length ${SEQ_LEN}\
-        --model-id ${MODEL} --model-type ${MODEL_TYPE} --dataset wikitext-valid\
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 python -u eval_ppl.py --sequence-length ${SEQ_LEN}\
+        --model-id ${MODEL} --model-type ${MODEL_TYPE}\
         ${SAVE_ARGS}\
+        --dataset ${DATASET}
         --use-topk --top-k ${TOPK} ${EVAL}| tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPK}${EVAL}.out 2>&1"
 
 echo ${run_cmd}

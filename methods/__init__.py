@@ -22,11 +22,27 @@
 #from .pca_topk.modify_mistral import make_mistral_attention_pca_topk as make_mistral_attention_pca_topk
 
 from .common.saver import TensorSaver as TensorSaver
+from .common.logger import WandbLogger as WandbLogger
+from .common.logger import NoOpLogger as NoOpLogger
 
 G_TENSOR_SAVER = None
+LOGGER = None
 
 def init_tensor_saver(tensor_dir):
     global G_TENSOR_SAVER 
     G_TENSOR_SAVER = TensorSaver(tensor_dir)
+
+def init_logger(args):
+    global LOGGER
+    if args.use_wandb:
+        LOGGER = WandbLogger(args)
+    else:
+        LOGGER = NoOpLogger(args)
+
+def finish_logger():
+    global LOGGER
+    if LOGGER is not None:
+        LOGGER.finish()
+
 
 

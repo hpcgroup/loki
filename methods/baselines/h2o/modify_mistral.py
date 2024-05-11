@@ -10,7 +10,7 @@ from functools import partial
 
 from .external.h2o_utils import local_heavy_hitter_mask
 
-def get_h2o_forward(heavy_ratio):
+def get_h2o_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -73,8 +73,8 @@ def get_h2o_forward(heavy_ratio):
 
         
         ### Heavy + Recent
-        heavy_budget = int(heavy_ratio * attn_weights.shape[-1])
-        recent_budget = int(heavy_ratio * attn_weights.shape[-1])
+        heavy_budget = int(args.heavy_ratio * attn_weights.shape[-1])
+        recent_budget = int(args.heavy_ratio * attn_weights.shape[-1])
 
         # Heavy Hitter Mask
         if heavy_budget > 0:
@@ -113,8 +113,8 @@ def get_h2o_forward(heavy_ratio):
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_mistral_attention_h2o(hr):
+def make_mistral_attention_h2o(args):
     #TODO: Maybe we should not use fractions here to be consistent with other methods
     print ("Modifying Mistral Attention -> H2O")
-    print (f"Heavy and Recent Ratio:{hr}")
-    MistralAttention.forward = get_h2o_forward(hr)
+    print (f"Heavy and Recent Ratio:{args.heavy_ratio}")
+    MistralAttention.forward = get_h2o_forward(args)
