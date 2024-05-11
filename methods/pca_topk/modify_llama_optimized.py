@@ -12,6 +12,7 @@ from functools import partial
 
 from .utils import mask_attn_pca_topk, get_pca_components
 import methods.pca_topk.external.gather_matmul as G
+import methods.pca_topk.kernel.pca_topk as G
 import methods
 
 
@@ -103,23 +104,20 @@ def get_pca_forward(args):
             key_states = key_states.reshape(-1, key_states.shape[-2], key_states.shape[-1])
             query_states = query_states.reshape(-1, query_states.shape[-2], query_states.shape[-1])
 
-            attn_weights = G.gather_outer_bmv(
-                query_states.contiguous(),
-                key_states.transpose(-1, -2).contiguous(),
+            attn_weights = G.gather_outer_bmv_optimized(
+                query_states,
+                key_states.transpose(-1, -2),
                 key_states_topk_indices,
-                chunk=256 # Varying this changes performance
-                #chunk=min(k2, 65536 // Q.shape[-1]),
             ) / math.sqrt(self.head_dim)
 
             attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
             attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
 
             value_states = value_states.reshape(-1, value_states.shape[-2], value_states.shape[-1])
-            attn_output = G.gather_inner_matrix_only_bmv(
-              attn_weights.contiguous(), 
-              value_states.contiguous(), 
+            attn_output = G.gather_inner_matrix_only_bmv_optimized(
+              attn_weights, 
+              value_states, 
               key_states_topk_indices, 
-              chunk=64
             )
             attn_output = attn_output.reshape(bsz, self.num_heads, q_len, self.head_dim)
         else:
