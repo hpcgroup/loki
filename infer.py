@@ -41,6 +41,8 @@ def setup_parser():
     parser.add_argument("--gen-length", type=int, default=32, help="Batch Size")
     parser.add_argument("--seed", type=int, default=1234, help="Seed")
     parser.add_argument("--use-optimized-code", action='store_true', default=False)
+    parser.add_argument("--warmup-iters", type=int, default=5)
+    parser.add_argument("--total-iters", type=int, default=10)
 
     return parser
 
@@ -48,8 +50,12 @@ def load_prompts(tokenizer, batch_size, prompt_length):
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
     encodings = tokenizer("\n\n".join(dataset["text"]), return_tensors="pt")
     total_tokens = encodings.input_ids.shape[1]
-    start_index = min(random.randint(0, total_tokens), total_tokens - batch_size * prompt_length)
-    input_ids = encodings.input_ids[:, start_index : start_index + batch_size * prompt_length].reshape(batch_size, prompt_length)
+    input_ids = []
+    for _ in range(batch_size):
+        start_index = min(random.randint(0, total_tokens), total_tokens - prompt_length)
+        tokens = encodings.input_ids[:, start_index : start_index + prompt_length].reshape(1, prompt_length)
+        input_ids.append(tokens)
+    input_ids = torch.cat(input_ids, dim=0)
     return input_ids
 
 if  __name__ == "__main__":
@@ -62,8 +68,8 @@ if  __name__ == "__main__":
     set_seed(args.seed)
    
     if args.method == "pca-topk":
-        args.top_k = args.prompt_length
-        args.top_r = 128
+        args.top_k = int(0.25 * args.prompt_length) 
+        args.top_r = 32
         args.rotary_type = "postrotary"
 
         if args.use_optimized_code:
@@ -84,20 +90,26 @@ if  __name__ == "__main__":
     
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)
-    
-    start_event.record()
-    generations = []
-
     input_ids = tokenized_prompts.cuda() 
-    with torch.autocast(device_type='cuda', dtype=dtype):
-        outputs = model.generate(input_ids, do_sample=True, max_new_tokens=args.gen_length, num_beams=4)
+    
+    # warmup iters
+    for _ in range(args.warmup_iters):
+        with torch.autocast(device_type='cuda', dtype=dtype):
+            outputs = model.generate(input_ids, do_sample=True, max_new_tokens=args.gen_length)
 
+    # timed iters
+    start_event.record()
+    for _ in range(args.total_iters - args.warmup_iters):
+        with torch.autocast(device_type='cuda', dtype=dtype):
+            outputs = model.generate(input_ids, do_sample=True, max_new_tokens=args.gen_length)
     end_event.record()
+    
+
     generated_tokens = outputs.numel() -  input_ids.numel()
     total_generated_tokens += generated_tokens
     
     torch.cuda.synchronize()
-    total_time = start_event.elapsed_time(end_event)
+    total_time = start_event.elapsed_time(end_event) / (args.total_iters - args.warmup_iters)
     tput = total_generated_tokens * 1000 / total_time
 
     output_ids = outputs[:, args.prompt_length:]
