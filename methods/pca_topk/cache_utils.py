@@ -347,6 +347,6 @@ def benchmark_attention(batch_size=1,
 if __name__ == "__main__":
     #test_pcatopk_cache()
     with torch.no_grad():
-        benchmark_attention(prompt_length=2048, num_gen_steps=64, batch_size=16, topk=2048 // 4, num_layers=8)
+        benchmark_attention(prompt_length=8000, num_gen_steps=128, batch_size=16, topk=8000 // 4, num_layers=8)
     
 
