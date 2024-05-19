@@ -158,6 +158,8 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
     matmul_time = 0
     top_keys = torch.zeros(bs, num_heads, top_k, head_dim).to("cuda")
     top_vals = torch.zeros(bs, num_heads, top_k, head_dim).to("cuda")
+    pca_projection_mat = torch.randn(num_heads, head_dim, head_dim, dtype=dtype, device='cuda')
+
 
     assert use_optimised_gather
     if use_optimised_gather:
@@ -168,7 +170,12 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
                 generative_query = torch.rand(bs, num_heads, 1, head_dim, device='cuda', dtype=dtype)
                 generative_key = torch.rand(bs, num_heads, 1, head_dim, device='cuda', dtype=dtype)
                 timers.stop('qk-gen')
-                
+
+                timers.start('project')
+                generative_key = generative_key.squeeze().transpose(0, 1).bmm(pca_projection_mat).transpose(0, 1).unsqueeze(2)
+                generative_query = generative_query.squeeze().transpose(0, 1).bmm(pca_projection_mat).transpose(0,1).unsqueeze(2)
+                timers.stop('project')
+
                 timers.start('cache-update')
                 keys, vals = cache.update(generative_key, generative_key, generative_query, layer, False)
                 timers.stop('cache-update')
