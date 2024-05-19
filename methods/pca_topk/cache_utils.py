@@ -172,8 +172,8 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
                 timers.stop('qk-gen')
 
                 timers.start('project')
-                generative_key = generative_key.squeeze().transpose(0, 1).bmm(pca_projection_mat).transpose(0, 1).unsqueeze(2)
-                generative_query = generative_query.squeeze().transpose(0, 1).bmm(pca_projection_mat).transpose(0,1).unsqueeze(2)
+                generative_key = generative_key.squeeze().transpose(0, 1).bmm(pca_projection_mat).unsqueeze(2)
+                generative_query = generative_query.squeeze().transpose(0, 1).bmm(pca_projection_mat).unsqueeze(2)
                 timers.stop('project')
 
                 timers.start('cache-update')
@@ -220,6 +220,10 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
                 attn_output = G.gather_inner_matrix_only_bmv_optimized(
                     attn_weights, vals, key_states_topk_indices)
                 timers.stop('sv-matmul')
+
+                timers.start('reshape-output')
+                attn_output = attn_output.view(num_heads, bs, 1, head_dim).transpose(0,1).transpose(1,2).contiguous()
+                timers.stop('reshape-output')
         timers.stop('total')
     else:
       for i in range(num_gen_steps):
@@ -282,6 +286,12 @@ def micro_bench_actual_attention(cache, prompt_keys, num_layers, timers, num_gen
           timers.start('sv-matmul')
           attn_output = torch.matmul(attn_weights, vals)
           timers.stop('sv-matmul')
+            
+          timers.start('reshape-output')
+          attn_output = attn_output.transpose(1, 2).contiguous()
+          timers.stop('reshape-output')
+    
+
     timers.stop('total')
 
 @torch.no_grad()
@@ -309,7 +319,9 @@ def benchmark_attention(batch_size=1,
         print("PCA TOPK Optimized")
         cache2 = PcaTopKCache()
         for i in range(num_layers):
-            cache2.update(prompt_keys[i], prompt_keys[i], prompt_keys[i], i)
+            cache2.update(prompt_keys[i].transpose(0,1).contiguous(), 
+                          prompt_keys[i].transpose(0,1).contiguous(), 
+                          prompt_keys[i].transpose(0,1).contiguous(), i)
         timers = Timers()
         micro_benchmark_pca_topk(cache2, prompt_keys, 32, topk, 
                                  num_gen_steps=num_gen_steps, num_layers=num_layers, 
