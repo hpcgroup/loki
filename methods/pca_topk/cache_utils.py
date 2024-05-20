@@ -154,7 +154,6 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
     num_heads = prompt_keys[0].shape[1]
     dtype = prompt_keys[0].dtype
     
-    print ("Starting microbenchmark")
     matmul_time = 0
     top_keys = torch.zeros(bs, num_heads, top_k, head_dim).to("cuda")
     top_vals = torch.zeros(bs, num_heads, top_k, head_dim).to("cuda")
@@ -247,9 +246,6 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
             torch.cuda.synchronize()
             end = time.time()
 
-            if i > 5:
-                matmul_time += end - start
-    print (f"Matmul Time: {matmul_time}")
 
 def micro_bench_actual_attention(cache, prompt_keys, num_layers, timers, num_gen_steps=2000):
     import time
@@ -260,7 +256,6 @@ def micro_bench_actual_attention(cache, prompt_keys, num_layers, timers, num_gen
     num_heads = prompt_keys[0].shape[1]
     dtype = prompt_keys[0].dtype
 
-    print ("Starting microbenchmark")
     matmul_time = 0
 
     timers.start('total')
@@ -315,8 +310,9 @@ def benchmark_attention(batch_size=1,
     #micro_benchmark_pca_topk(cache1, prompt_keys, 32, topk, num_gen_steps=num_gen_steps)
     #del cache1
 
+    
+    print("PCA TOPK Optimized")
     for _ in range(10):
-        print("PCA TOPK Optimized")
         cache2 = PcaTopKCache()
         for i in range(num_layers):
             cache2.update(prompt_keys[i].transpose(0,1).contiguous(), 
@@ -328,12 +324,15 @@ def benchmark_attention(batch_size=1,
                                  use_optimised_gather=True, timers=timers)
         del cache2
         times = timers.get_times()
-        print(times)
-        print("==================================")
+        #print(times)
+    
+    print("Average time (minus cache updates) is - ")
+    print(times['total'] - times['cache-update'], " s")
+    print("==================================")
         
 
+    print("Actual Attention")
     for _ in range(10):
-        print("Actual Attention")
         cache3= PcaTopKCache()
         for i in range(num_layers):
             cache3.update(prompt_keys[i], prompt_keys[i], prompt_keys[i], i)
@@ -342,11 +341,16 @@ def benchmark_attention(batch_size=1,
                                      num_gen_steps=num_gen_steps, timers=timers)
         del cache3
         times = timers.get_times()
-        print(times)
+    print("Average time (minus cache updates) is - ")
+    print(times['total'] - times['cache-update'], " s")
+    print("==================================")
 
 if __name__ == "__main__":
     #test_pcatopk_cache()
     with torch.no_grad():
-        benchmark_attention(prompt_length=8000, num_gen_steps=128, batch_size=16, topk=8000 // 4, num_layers=8)
+        prompt_length = 2000
+        for num_gen_steps in [200, 500, 1000]:
+            print(f"prompt length = {prompt_length}, gen length = {num_gen_steps}, batch_size={16}, topk and top r are 25%")
+            benchmark_attention(prompt_length=prompt_length, num_gen_steps=num_gen_steps, batch_size=16, topk=prompt_length // 4, num_layers=1)
     
 
