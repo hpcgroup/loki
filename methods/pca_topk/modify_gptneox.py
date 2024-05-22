@@ -35,7 +35,6 @@ def get_pca_topk_init(args):
         self.attention_dropout = nn.Dropout(config.attention_dropout)
         self.is_causal = True
 
-        self.layer_idx = methods.G_TENSOR_SAVER.get_layer_idx()
     return modified_attention_init
 
 
@@ -45,6 +44,11 @@ def get_pca_topk_attn(args):
         # compute causal mask from causal mask buffer
         batch_size, num_attention_heads, query_length, attn_head_size = query.size()
         key_length = key.size(-2)
+
+        if not hasattr(self, "layer_idx"):
+            if methods.G_TENSOR_SAVER is None:
+                methods.init_tensor_saver("")
+            self.layer_idx = methods.G_TENSOR_SAVER.get_layer_idx()
 
         # dynamically increase the causal mask with the key length, if needed.
         if key_length > self.bias.shape[-1]:
@@ -121,5 +125,4 @@ def make_gptneox_attention_pca_topk(args):
     print ("Top R:", args.top_r)
     print ("Top K:", args.top_k)
     print ("Not using alpha")
-    GPTNeoXAttention.__init__ = get_pca_topk_init(args)
     GPTNeoXAttention._attn = get_pca_topk_attn(args)

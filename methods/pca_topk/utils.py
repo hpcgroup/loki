@@ -10,16 +10,17 @@ try:
 except ImportError:
     AXONN_AVAILABLE=False
 
-#PCA_DATA_PATH = "/pscratch/sd/p/prajwal/InferenceData"
-PCA_DATA_PATH = "/global/cfs/cdirs/m4641/ApproxAttn/"
+PCA_DATA_PATH = "/pscratch/sd/p/prajwal/InferenceData"
+#PCA_DATA_PATH = "/global/cfs/cdirs/m4641/ApproxAttn/"
 
 def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, repeat_kv):
     model_folder_name = args.model_id.split("/")[-1] + "-PCA"
     rotary_type = args.rotary_type
+    transform_dataset = args.transform_dataset
 
-    components_file_path = os.path.join(PCA_DATA_PATH, f"{model_folder_name}/wikitext/{rotary_type}/key/pca_components/pca_components_layer_{layer_idx}.pt")
-    mean_file_path = os.path.join(PCA_DATA_PATH, f"{model_folder_name}/wikitext/{rotary_type}/key/pca_means/pca_means_layer_{layer_idx}.pt")
-    explained_variance_file_path = os.path.join(PCA_DATA_PATH, f"{model_folder_name}/wikitext/{rotary_type}/key/pca_explained_variance/pca_explained_variance_layer_{layer_idx}.pt")
+    components_file_path = os.path.join(PCA_DATA_PATH, f"{model_folder_name}/{transform_dataset}/{rotary_type}/key/pca_components/pca_components_layer_{layer_idx}.pt")
+    mean_file_path = os.path.join(PCA_DATA_PATH, f"{model_folder_name}/{transform_dataset}/{rotary_type}/key/pca_means/pca_means_layer_{layer_idx}.pt")
+    explained_variance_file_path = os.path.join(PCA_DATA_PATH, f"{model_folder_name}/{transform_dataset}/{rotary_type}/key/pca_explained_variance/pca_explained_variance_layer_{layer_idx}.pt")
 
     #methods.LOGGER.update_config({"components_file_path": os.path.dirname(components_file_path)})
 
