@@ -27,6 +27,7 @@ from .common.logger import NoOpLogger as NoOpLogger
 
 G_TENSOR_SAVER = None
 LOGGER = None
+G_TIMERS = None
 
 def init_tensor_saver(tensor_dir):
     global G_TENSOR_SAVER 

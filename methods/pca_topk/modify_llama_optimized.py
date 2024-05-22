@@ -13,6 +13,7 @@ from functools import partial
 from .utils import mask_attn_pca_topk, get_pca_components
 import methods.pca_topk.external.gather_matmul as G
 import methods.pca_topk.kernel.pca_topk as G
+from methods.common.timers import Timers
 import methods
 
 
@@ -32,6 +33,7 @@ def get_pca_forward(args):
         past_key_value: Optional[Cache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if "padding_mask" in kwargs:
@@ -74,6 +76,7 @@ def get_pca_forward(args):
         if not hasattr(self, "pca_components"):
             _, self.pca_components, _= get_pca_components(args, self.layer_idx, self.head_dim, args.top_r, self.num_key_value_groups, repeat_kv)
             self.pca_components = self.pca_components.to(query_states.dtype)
+            self.pca_components = self.pca_components.view(self.num_key_value_heads, self.head_dim, -1)
 
             # TODO: Keep it fixed or make it dynamic?
             if args.top_k <= 1:
@@ -81,27 +84,54 @@ def get_pca_forward(args):
             else:
                 self.top_k = int(args.top_k)
 
+            if methods.G_TIMERS is None:
+                methods.G_TIMERS = Timers()
+                
+
+        #if query_states.shape[-2] == 1:
+        #    methods.G_TIMERS.start("pca_topk_gen")
+        #    methods.G_TIMERS.start("PCA_MM")
+
+        key_states = key_states.transpose(0, 1).view(self.num_key_value_heads, -1, self.head_dim)
+        query_states = query_states.transpose(0, 1).view(self.num_key_value_heads, -1, self.head_dim)
+
         key_states = torch.matmul(key_states, self.pca_components)
         query_states = torch.matmul(query_states, self.pca_components)
 
+        key_states = key_states.view(self.num_key_value_heads, bsz, q_len, self.head_dim).transpose(0, 1).contiguous()
+        query_states = query_states.view(self.num_key_value_heads, bsz, q_len, self.head_dim).transpose(0, 1)
+
+        #if query_states.shape[-2] == 1:
+        #    methods.G_TIMERS.stop("PCA_MM")
+        #    methods.G_TIMERS.start("cache")
+
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
+        #if query_states.shape[-2] == 1:
+        #    methods.G_TIMERS.stop("cache")
 
         # Generation Step
         if query_states.shape[-2] == 1:
             # Compute Approximate Attention Weights
             # We do not need a causal mask here since this is the generation step
-            attn_weights = torch.matmul(query_states[:,:,:,:args.top_r], key_states.transpose(2, 3)[:,:,:args.top_r,:]) / math.sqrt(self.head_dim)
+            #methods.G_TIMERS.start("main_code")
+            #methods.G_TIMERS.start("ApproxMM")
+            attn_weights = torch.matmul(query_states[:,:,:,:args.top_r], key_states[:,:,:,:args.top_r].transpose(2, 3))
+            #methods.G_TIMERS.stop("ApproxMM")
+            #/ math.sqrt(self.head_dim)
 
-            key_states_topk_indices = torch.topk(attn_weights, self.top_k, dim=-1).indices.to("cuda")
-            key_states_topk_indices , _ = torch.sort(key_states_topk_indices, dim=-1)
+            #methods.G_TIMERS.start("TopKFind")
+            key_states_topk_indices = torch.topk(attn_weights, self.top_k, dim=-1, sorted=False).indices.to("cuda")
+            #key_states_topk_indices , _ = torch.sort(key_states_topk_indices, dim=-1)
             key_states_topk_indices = key_states_topk_indices.reshape(-1, key_states_topk_indices.shape[-1])
+            #methods.G_TIMERS.stop("TopKFind")
 
-            key_states = key_states.reshape(-1, key_states.shape[-2], key_states.shape[-1])
+            #methods.G_TIMERS.start("OptKernel1")
+            key_states = key_states.view(-1, key_states.shape[-2], key_states.shape[-1])
             query_states = query_states.reshape(-1, query_states.shape[-2], query_states.shape[-1])
 
             attn_weights = G.gather_outer_bmv_optimized(
@@ -109,7 +139,10 @@ def get_pca_forward(args):
                 key_states.transpose(-1, -2),
                 key_states_topk_indices,
             ) / math.sqrt(self.head_dim)
+            #methods.G_TIMERS.stop("OptKernel1")
+            
 
+            #methods.G_TIMERS.start("OptKernel2")
             attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
             attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
 
@@ -120,6 +153,8 @@ def get_pca_forward(args):
               key_states_topk_indices, 
             )
             attn_output = attn_output.reshape(bsz, self.num_heads, q_len, self.head_dim)
+            #methods.G_TIMERS.stop("OptKernel2")
+            #methods.G_TIMERS.stop("main_code")
         else:
             # Compute Standard Attention
             attn_weights = (torch.matmul(query_states, key_states.transpose(2, 3))) / math.sqrt(self.head_dim)
@@ -152,6 +187,9 @@ def get_pca_forward(args):
 
         if not output_attentions:
             attn_weights = None
+
+        #if query_states.shape[-2] == 1:
+        #    methods.G_TIMERS.stop("pca_topk_gen")
 
         return attn_output, attn_weights, past_key_value
     return modified_forward

@@ -2,16 +2,18 @@ from typing import List, Optional, Tuple, Union
 import math
 import warnings
 from transformers.models.llama.modeling_llama import LlamaAttention, repeat_kv, apply_rotary_pos_emb
+from transformers.models.llama.configuration_llama import LlamaConfig
+from transformers.models.llama.modeling_llama import LlamaAttention, LlamaMLP, ACT2FN
 from transformers.cache_utils import Cache
 import torch
 from torch import nn
 import torch.nn.functional as F
 from functools import partial
-import time
 
-from .h2o_utils import local_heavy_hitter_mask
+from methods.common.timers import Timers
+import methods
 
-def get_hfopth2o_forward(args):
+def get_hf_base_timers(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
@@ -20,14 +22,13 @@ def get_hfopth2o_forward(args):
         past_key_value: Optional[Cache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
-        cache_position = None,
-        **kwargs,    
-      ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        if "padding_mask" in kwargs:
-            warnings.warn(
-                "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
-            )
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
+
+        if methods.G_TIMERS is None:
+            methods.G_TIMERS = Timers()
 
         if self.config.pretraining_tp > 1:
             key_value_slicing = (self.num_key_value_heads * self.head_dim) // self.config.pretraining_tp
@@ -59,6 +60,9 @@ def get_hfopth2o_forward(args):
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
+        if query_states.shape[-2] == 1:
+            methods.G_TIMERS.start("hf_base")
+
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
@@ -72,28 +76,6 @@ def get_hfopth2o_forward(args):
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
             attn_weights = attn_weights + causal_mask
-
-        ### Heavy + Recent
-        heavy_budget = int(args.heavy_ratio * attn_weights.shape[-1])
-        recent_budget = int(args.heavy_ratio * attn_weights.shape[-1])
-
-        # Heavy Hitter Mask
-        alpha = None
-        if heavy_budget > 0:
-            mask_bottom = local_heavy_hitter_mask(attn_weights, heavy_budget) # Default: No padding applied to input
-        else:
-            mask_bottom = torch.zeros_like(attn_weights, dtype=torch.bool)
-
-        ones = torch.ones_like(attn_weights, dtype=torch.bool)
-        ones = torch.triu(ones, diagonal=-recent_budget)
-        mask_bottom = torch.logical_or(mask_bottom, ones)
-
-        mask_bottom = torch.tril(mask_bottom, diagonal=0)
-
-        # Now we change the mask_bottom tensor to have 0 in place of True and -inf in place of False
-        mask_bottom = torch.where(mask_bottom, torch.tensor(0.0, dtype=torch.float32), torch.tensor(-float('inf'), dtype=torch.float32)).to(causal_mask.dtype)
-
-        attn_weights = attn_weights + mask_bottom
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -120,11 +102,12 @@ def get_hfopth2o_forward(args):
         if not output_attentions:
             attn_weights = None
 
+        if query_states.shape[-2] == 1:
+            methods.G_TIMERS.stop("hf_base")
+
         return attn_output, attn_weights, past_key_value
     return modified_forward
 
-def make_llama_attention_h2o(args):
-    #TODO: Maybe we should not use fractions here to be consistent with other methods
-    print ("Modifying Llama Attention -> HF Optimised H2O")
-    print (f"Heavy and Recent Ratio:{args.heavy_ratio}")
-    LlamaAttention.forward = get_hfopth2o_forward(args)
+def make_llama_attention_hf_timers(args):
+    print ("Modifying Llama Attention -> HF Base with Timers")
+    LlamaAttention.forward = get_hf_base_timers(args)

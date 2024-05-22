@@ -5,7 +5,7 @@
 #SBATCH --gpus-per-node=4
 #SBATCH --account=m4641_g
 #SBATCH --ntasks-per-node=4
-#SBATCH --time=02:30:00
+#SBATCH --time=04:30:00
 #SBATCH -J pca_topk
 #SBATCH --output=outfiles/%x-%j.out
 
@@ -47,7 +47,9 @@ SEQ_LEN=$3
 MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
 TOPR=$4
 TOPK=$5
-EVAL=$6
+ROTARY=$6
+EVAL=$7
+TDATA=$8
 WANDB=true
 
 OUT_FILE_PATH="experiments/exp-pca-topk/${MODEL_NAME}"
@@ -67,8 +69,11 @@ echo "Running model ${MODEL} with PCA Attention and top-r ${TOPR} and top-k ${TO
 run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh python -u eval_ppl.py --use-axonn --sequence-length ${SEQ_LEN}\
         --model-id ${MODEL} --model-type ${MODEL_TYPE}\
         ${WANDB_ARGS}\
-        --use-pca-topk --top-r ${TOPR} --top-k ${TOPK} ${EVAL} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}_${TOPK}${EVAL}.out 2>&1"
+        --rotary-type ${ROTARY}\
+        --use-pca-topk --top-r ${TOPR} --top-k ${TOPK} ${EVAL} ${TDATA} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}_${TOPK}${EVAL}.out 2>&1"
 
+
+      
 #run_cmd="srun -N 1 ./set_env_vars_slurm.sh python -u eval_ppl.py --use-axonn --sequence-length ${SEQ_LEN}\
 #        --model-id ${MODEL} --model-type ${MODEL_TYPE}\
 #        ${WANDB_ARGS}\

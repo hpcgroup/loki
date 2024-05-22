@@ -22,6 +22,7 @@ def get_pca_args(parser):
     parser.add_argument("--use-pca-topk", action='store_true', default=False, help="use the PCA TopK algos")
     parser.add_argument("--rotary-type", type=str, default="postrotary", help="rotary type")
     parser.add_argument("--recent-ratio", type=float, default=-1, help="PcaTopK recent ratio," "set to -1 by default")
+    parser.add_argument("--transform-dataset", type=str, default="wikitext", help="pca transform dataset - wikitext, bookcorpus, c4")
     return parser
 
 def get_save_tensor_args(parser):
@@ -90,4 +91,7 @@ def get_config_dict(args):
         config_dict["top_k"] = args.top_k
         config_dict["rotary_type"] = args.rotary_type
         config_dict["recent_ratio"] = args.recent_ratio
+        config_dict["transform_dataset"] = args.transform_dataset
+    else:
+        config_dict["method"] = "base_hf"
     return config_dict

@@ -2,6 +2,7 @@ from typing import List, Optional, Tuple, Union
 import math
 import warnings
 from transformers.models.mistral.modeling_mistral import MistralAttention, repeat_kv, apply_rotary_pos_emb
+from transformers.models.mixtral.modeling_mixtral import MixtralAttention
 from transformers.cache_utils import Cache
 import torch
 from torch import nn
@@ -115,6 +116,7 @@ def get_h2o_forward(args):
 
 def make_mistral_attention_h2o(args):
     #TODO: Maybe we should not use fractions here to be consistent with other methods
-    print ("Modifying Mistral Attention -> H2O")
+    print ("Modifying Mistral and Mixtral Attention -> H2O")
     print (f"Heavy and Recent Ratio:{args.heavy_ratio}")
     MistralAttention.forward = get_h2o_forward(args)
+    MixtralAttention.forward = get_h2o_forward(args)

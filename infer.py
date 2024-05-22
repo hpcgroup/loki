@@ -69,7 +69,7 @@ if  __name__ == "__main__":
    
     if args.method == "pca-topk":
         args.top_k = int(0.25 * args.prompt_length) 
-        args.top_r = 32
+        args.top_r = 16
         args.rotary_type = "postrotary"
 
         if args.use_optimized_code:
@@ -78,6 +78,10 @@ if  __name__ == "__main__":
             from methods.pca_topk.modify_llama import make_llama_attention_pca_topk
 
         make_llama_attention_pca_topk(args)
+
+    if args.method == "baseline":
+        from methods.pca_topk.modify_llama_hf_timers import make_llama_attention_hf_timers
+        make_llama_attention_hf_timers(args)
 
     with parallelize(model_id):
         model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype).to('cuda')
@@ -97,11 +101,18 @@ if  __name__ == "__main__":
         with torch.autocast(device_type='cuda', dtype=dtype):
             outputs = model.generate(input_ids, do_sample=True, max_new_tokens=args.gen_length)
 
+    if torch.distributed.get_rank() == 0:
+        if methods.G_TIMERS is not None:
+            methods.G_TIMERS.get_times()
+
     # timed iters
     start_event.record()
     for _ in range(args.total_iters - args.warmup_iters):
         with torch.autocast(device_type='cuda', dtype=dtype):
             outputs = model.generate(input_ids, do_sample=True, max_new_tokens=args.gen_length)
+            if torch.distributed.get_rank() == 0:
+                if methods.G_TIMERS is not None:
+                    print(methods.G_TIMERS.get_times(100))
     end_event.record()
     
 
@@ -116,9 +127,10 @@ if  __name__ == "__main__":
     detokenized_generations = tokenizer.batch_decode(output_ids)
 
     if torch.distributed.get_rank() == 0:
-        for prompt, generation in zip(detokenized_prompts, detokenized_generations):
-            print(f"{OKBLUE}[PROMPT]: {prompt}{ENDC}")
-            print(f"{OKGREEN}[GENERATION]: = {generation}{ENDC}")
-            print("=====")
+        #for prompt, generation in zip(detokenized_prompts, detokenized_generations):
+            #print(f"{OKBLUE}[PROMPT]: {prompt}{ENDC}")
+            #print(f"{OKGREEN}[GENERATION]: = {generation}{ENDC}")
+            #print("=====")
         print(f"Tput = {tput} generated tokens / second")
+
 

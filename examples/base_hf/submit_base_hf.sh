@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --qos=regular
 #SBATCH --constraint=gpu&hbm80g
-#SBATCH -N 1
+#SBATCH -N 2
 #SBATCH --gpus-per-node=4
 #SBATCH --account=m4641_g
 #SBATCH --ntasks-per-node=4
-#SBATCH --time=03:00:00
-#SBATCH -J topk
+#SBATCH --time=02:30:00
+#SBATCH -J base_hf
 #SBATCH --output=outfiles/%x-%j.out
 
 
@@ -45,11 +45,10 @@ MODEL=$1
 MODEL_TYPE=$2
 SEQ_LEN=$3
 MODEL_NAME=$(echo "$MODEL" | cut -d'/' -f2)
-TOPK=$4
-EVAL=$5
+EVAL=$4
 WANDB=true
 
-OUT_FILE_PATH="experiments/exp-topk/${MODEL_NAME}"
+OUT_FILE_PATH="experiments/exp-basehf/${MODEL_NAME}"
 mkdir -p $OUT_FILE_PATH
 
 WANDB_ARGS=""
@@ -61,12 +60,12 @@ echo "Model: ${MODEL}"
 echo "Model Name: ${MODEL_NAME}"
 echo "Sequence Length: ${SEQ_LEN}"
 echo "Output Path: ${OUT_FILE_PATH}"
-echo "Running model ${MODEL} with top-k ${TOPK}"
+echo "Running model ${MODEL}"
 
 run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh python -u eval_ppl.py --use-axonn --sequence-length ${SEQ_LEN}\
         --model-id ${MODEL} --model-type ${MODEL_TYPE}
         ${WANDB_ARGS}\
-        --use-axonn --use-topk --top-k ${TOPK} ${EVAL}| tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPK}${EVAL}.out 2>&1"
+        --use-axonn ${EVAL}| tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${EVAL}.out 2>&1"
 
 echo ${run_cmd}
 eval ${run_cmd}
