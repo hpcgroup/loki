@@ -1,7 +1,7 @@
 
 import sys
-sys.path.append("/pscratch/sd/p/prajwal/hf_cache/modules/transformers_modules/microsoft/Phi-3-mini-4k-instruct/")
-#sys.path.append("/pscratch/sd/p/prajwal/hf_cache/")
+sys.path.append("/pscratch/sd/p/Dir/hf_cache/modules/transformers_modules/microsoft/Phi-3-mini-4k-instruct/")
+#sys.path.append("/pscratch/sd/p/Dir/hf_cache/")
 
 from typing import List, Optional, Tuple, Union
 import math

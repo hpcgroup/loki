@@ -11,7 +11,7 @@ from functools import partial
 from .cache_utils import SparHatCache as SparHatCache
 from methods.common.utils import mask_attn_top_k
 
-base_tensor_file_path = "/pscratch/sd/p/prajwal/InferenceData/tensor_iteration_{}_{}.pt"
+base_tensor_file_path = "/pscratch/sd/p/Dir/InferenceData/tensor_iteration_{}_{}.pt"
 iteration_count = 0
 
 def get_s_hat_forward():
