@@ -1,4 +1,4 @@
-from pca_topk import gather_outer_bmv_optimized, gather_inner_matrix_only_bmv_optimized
+from pca_topk import gather_outer_bmv_optimized, gather_inner_matrix_only_bmv_optimized, topr_bmv_optimized
 import torch
 import numpy as np
 import pytest
@@ -71,11 +71,27 @@ def test_second_bmm(B, NH, S, D, sparsity, dtype=torch.float32):
 
     assert torch.allclose(y_optimized, y_torch, rtol=1e-2, atol=1e-2)
 
+@pytest.mark.parametrize("B", [2, 4, 8, 16])
+@pytest.mark.parametrize("NH", [8, 16, 32])
+@pytest.mark.parametrize("S", [32, 33, 37, 64, 69, 73, 128, 255, 259, 1024, 1028, 2048, 2500])
+@pytest.mark.parametrize("r", [32, 64, 128])
+def test_topr_bmm(B, NH, S, r, dtype=torch.float32):
+    k_seq_len = S
+    D = 128
+    q = torch.randn((B*NH, 1, D), device='cuda', dtype=dtype)
+    k = torch.randn((B*NH, k_seq_len, D), device='cuda', dtype=dtype)
+
+    y_optimized = topr_bmv_optimized(q, k.transpose(1,2), r)
+
+    y_torch = torch.bmm(q[:, :, :r], k[: , :, :r].transpose(1,2))
+
+    assert torch.allclose(y_optimized, y_torch, rtol=1e-2, atol=1e-2)
+
 if __name__ == "__main__":
-    test_second_bmm(
+    test_topr_bmm(
         B=2,
         NH=32,
-        S=123,
+        S=1024,
         D=128,
         sparsity=0.25
     )
