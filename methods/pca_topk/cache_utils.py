@@ -17,6 +17,7 @@ torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 
 from timers import Timers
+import json
 
 # Work In Progress
 class PcaTopKCache(Cache): # Not used anymore
@@ -153,7 +154,8 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
     bs = prompt_keys[0].shape[0]
     num_heads = prompt_keys[0].shape[1]
     dtype = prompt_keys[0].dtype
-    
+    prompt_seq_length = prompt_keys[0].shape[2]
+
     matmul_time = 0
     top_keys = torch.zeros(bs, num_heads, top_k, head_dim).to("cuda")
     top_vals = torch.zeros(bs, num_heads, top_k, head_dim).to("cuda")
@@ -180,7 +182,11 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
                 timers.stop('cache-update')
 
                 timers.start('qk-matmul-1')
-                attn_weights = torch.matmul(generative_query[:,:,:,:top_r], keys.transpose(2, 3)[:,:,:top_r,:]) / math.sqrt(head_dim)
+                #attn_weights = torch.matmul(generative_query[:,:,:,:top_r], keys.transpose(2, 3)[:,:,:top_r,:]) / math.sqrt(head_dim)
+                nh, bs, s, r = keys.shape
+                attn_weights = G.topr_bmv_optimized(A=generative_query.view(nh*bs, 1, r), B=keys.view(nh*bs, s, r).transpose(-1,-2), 
+                                                    r=top_r)
+                attn_weights = attn_weights.view(nh, bs, 1, s)
                 timers.stop('qk-matmul-1')
 
                 # Get top-k keys and top-k values based on the attention scores
@@ -231,7 +237,6 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
 
             start = time.time()
             attn_weights = torch.matmul(generative_query[:,:,:,:top_r], keys.transpose(2, 3)[:,:,:top_r,:]) / math.sqrt(head_dim)
-
             # Get top-k keys and top-k values based on the attention scores
             key_states_topk_indices = torch.topk(attn_weights, top_k, dim=-1).indices.to("cuda")
             key_states_topk_indices,_ = torch.sort(key_states_topk_indices, dim=-1)
@@ -324,12 +329,12 @@ def benchmark_attention(batch_size=1,
                                  use_optimised_gather=True, timers=timers)
         del cache2
         times = timers.get_times()
-        #print(times)
+        print(times)
     
     print("Average time (minus cache updates) is - ")
     print(times['total'] - times['cache-update'], " s")
     print("==================================")
-        
+    times_pca_topk = times    
 
     print("Actual Attention")
     for _ in range(10):
@@ -343,14 +348,22 @@ def benchmark_attention(batch_size=1,
         times = timers.get_times()
     print("Average time (minus cache updates) is - ")
     print(times['total'] - times['cache-update'], " s")
+    print(times)
     print("==================================")
+    times_vanilla = times
+    return times_pca_topk, times_vanilla
 
 if __name__ == "__main__":
     #test_pcatopk_cache()
     with torch.no_grad():
         prompt_length = 2000
-        for num_gen_steps in [200, 500, 1000]:
+        for num_gen_steps in [1000]:
             print(f"prompt length = {prompt_length}, gen length = {num_gen_steps}, batch_size={16}, topk and top r are 25%")
-            benchmark_attention(prompt_length=prompt_length, num_gen_steps=num_gen_steps, batch_size=16, topk=prompt_length // 4, num_layers=1)
+            times_pca_topk, times_vanilla = benchmark_attention(prompt_length=prompt_length, num_gen_steps=num_gen_steps, batch_size=16, topk=prompt_length // 4, num_layers=1)
+            with open(f"prompt_{prompt_length}_gen_{num_gen_steps}_pca_topk_opt_first_matmul.json", "w") as f:
+                json.dump(times_pca_topk, f, indent=2)
+
+            with open(f"prompt_{prompt_length}_gen_{num_gen_steps}_vanilla.json", "w") as f:
+                json.dump(times_vanilla, f, indent=2)
     
 

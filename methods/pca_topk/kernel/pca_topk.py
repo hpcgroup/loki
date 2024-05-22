@@ -109,6 +109,98 @@ def gather_outer_bmv_optimized(A: Tensor, B: Tensor, I: Tensor) -> Tensor:
 
     return Y
 
+def get_autotune_config_topr():
+  return [
+    triton.Config({"n_chunk": 32}),
+    triton.Config({"n_chunk": 128}),
+    triton.Config({"n_chunk": 512}),
+    triton.Config({"n_chunk": 1024})
+  ]
+
+@triton.autotune(
+    configs=get_autotune_config_topr(),
+    key=['b', 'r'],
+)
+@triton.jit
+def _kernel_topr_bmv(
+    A_ptr,
+    B_ptr,
+    Y_ptr,
+    k: tl.constexpr,
+    b: int,
+    n: int,
+    r: tl.constexpr,
+    n_chunk: tl.constexpr,
+    A_s0: int,
+    A_s2: int,
+    B_s0: int,
+    B_s1: int,
+    B_s2: int
+):
+    pid_b = tl.program_id(axis=0).to(tl.int64)
+    pid_n = tl.program_id(axis=1).to(tl.int64)
+    a = tl.load(A_ptr + pid_b * A_s0 + tl.arange(0, r) * A_s2)  # (r)
+    chunk_idx = pid_n * n_chunk + tl.arange(0, n_chunk)
+    #i = tl.load(I_ptr + pid_b * I_s0 + chunk_idx * I_s1, mask=(chunk_idx < n))# (n_chunk)
+    b = tl.load(  # (r x n_chunk)
+        B_ptr
+        + pid_b * B_s0
+        + (tl.arange(0, r) * B_s1)[:, None]
+        + (chunk_idx * B_s2)[None, :],
+        mask=(chunk_idx < n)[None, :]
+    )
+    # # As tl.dot() is unavailable for matrix-vector
+    y = tl.sum((a[:, None] * b).to(tl.float32), 0).to(a.dtype)  # (n_chunk)
+    tl.store(Y_ptr + pid_b * n + chunk_idx, y, mask=(chunk_idx < n))
+
+def topr_bmv_optimized(A: Tensor, B: Tensor, r: int) -> Tensor:
+    """Batched vector-matrix multiplication, with a gather on the matrix outer dimension.
+
+    Dimensions:
+       b -- batch
+       k -- inner dimension
+       n -- outer dimension (n)
+
+    A -- (b, 1, k)         batch of vectors
+    B -- (b, k, n)         batch of matrices
+    r -- int               only r out of k dimensions are used for the inner product
+
+    returns -- (b, 1, n)   the inner product of `A` and `B`, but only using r out of k inner dimensions
+    """
+    if A.ndim > 3:
+        assert B.ndim == A.ndim 
+        return gather_outer_bmv_custom(
+            A.flatten(end_dim=-3),
+            B.flatten(end_dim=-3),
+            r
+        ).unflatten(0, A.shape[:-2])
+    assert A.ndim == 3 and B.ndim == 3 and A.shape[1] == 1 and A.shape[2] == B.shape[1]
+
+    b, k, n = A.shape[0], A.shape[2], B.shape[-1]
+    Y = torch.empty((b, 1, n), dtype=A.dtype, device=A.device)
+    assert Y.stride(0) == n and Y.stride(2) == 1
+    assert r <= k
+
+    grid = lambda META: (b, triton.cdiv(n, META["n_chunk"]))
+    _kernel_topr_bmv[grid](
+        A_ptr=A,
+        B_ptr=B,
+        Y_ptr=Y,
+        b=b,
+        k=k,
+        n=n,
+        r=r,
+        A_s0=A.stride(0),
+        A_s2=A.stride(2),
+        B_s0=B.stride(0),
+        B_s1=B.stride(1),
+        B_s2=B.stride(2),
+    )
+
+
+    return Y
+
+
 
 def get_autotune_config_inner():
   return [
