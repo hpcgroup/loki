@@ -10,7 +10,7 @@ try:
 except ImportError:
     AXONN_AVAILABLE=False
 
-PCA_DATA_PATH = "/pscratch/sd/p/prajwal/InferenceData"
+PCA_DATA_PATH = "/pscratch/sd/p/Dir/InferenceData"
 #PCA_DATA_PATH = "/global/cfs/cdirs/m4641/ApproxAttn/"
 
 def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, repeat_kv):

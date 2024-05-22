@@ -1,3 +1,4 @@
+# This code extends upon SPAR-Q's code from https://github.com/graphcore-research/llm-inference-research/blob/benchmarks/src/gather_matmul.py
 import math
 import warnings
 

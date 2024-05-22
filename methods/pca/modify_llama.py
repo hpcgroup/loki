@@ -116,9 +116,9 @@ def get_pca_init(top_r):
         self._init_rope()
 
         # Initialise PCA transforms
-        components_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_components/pca_components_layer_{}.pt".format(layer_idx)
-        mean_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_means/pca_means_layer_{}.pt".format(layer_idx)
-        explained_variance_file_path = "/pscratch/sd/p/prajwal/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{}.pt".format(layer_idx)
+        components_file_path = "/pscratch/sd/p/Dir/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_components/pca_components_layer_{}.pt".format(layer_idx)
+        mean_file_path = "/pscratch/sd/p/Dir/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_means/pca_means_layer_{}.pt".format(layer_idx)
+        explained_variance_file_path = "/pscratch/sd/p/Dir/InferenceData/Llama2-7B-PCA/wikitext/postrotary/key/pca_explained_variance/pca_explained_variance_layer_{}.pt".format(layer_idx)
 
         # PCA Components with the shape (num_heads, head_dim, top_r)
         self.pca_components = torch.load(components_file_path).to("cuda")

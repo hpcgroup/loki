@@ -44,7 +44,8 @@ if __name__ == "__main__":
 
     modifier_method = get_modifier(args)
     if modifier_method is None:
-        raise ValueError("Modifier method not found")
+        print ("Running Base HF Model without any modification")
+        #raise ValueError("Modifier method not found")
 
     print (modifier_method)
 
@@ -62,22 +63,40 @@ if __name__ == "__main__":
     if args.lm_harness_eval:
         import lm_eval
         from lm_perplexity_eval import evaluate
-        model = evaluate(model_id=args.model_id,
-                    dataset=args.dataset,
-                    sequence_length=args.sequence_length,
-                    use_axonn=args.use_axonn,
-                    past_key_values=cache,
-                    axonn_low_level_api=True,
-                    return_model=True)
-        results = lm_eval.simple_evaluate(
-            model = "hf",
-            #model_args=f"pretrained={args.model_id}",
-            #model_args={"pretrained": model, "parallelize": True},
-            model_args={"pretrained": model},
-            tasks = LM_HARNESS_TASKS.keys(),
-            log_samples=False,
-            batch_size=16
-        )
+        use_axonn_low_level_api = True
+
+        if args.model_type == "gptneox":
+            args.use_axonn = False
+        if args.model_id == "mistralai/Mixtral-8x22B-v0.1" or args.use_h2o:
+            use_axonn_low_level_api = False
+        
+        if args.use_h2o:
+            # H2O modification for lm_eval does not work for gsm8k. Need to modify their hh code
+            del LM_HARNESS_TASKS["gsm8k"]
+
+        if args.use_axonn:
+            model = evaluate(model_id=args.model_id,
+                        dataset=args.dataset,
+                        sequence_length=args.sequence_length,
+                        use_axonn=args.use_axonn,
+                        past_key_values=cache,
+                        axonn_low_level_api=use_axonn_low_level_api,
+                        return_model=True)
+            results = lm_eval.simple_evaluate(
+                model = "hf",
+                model_args={"pretrained": model},
+                tasks = LM_HARNESS_TASKS.keys(),
+                log_samples=False,
+                batch_size=8
+            )
+        else:
+            results = lm_eval.simple_evaluate(
+                model = "hf",
+                model_args=f"pretrained={args.model_id}",
+                tasks = LM_HARNESS_TASKS.keys(),
+                log_samples=False,
+                batch_size=16
+            )
 
         if results is not None:
             print(results["results"])
@@ -86,12 +105,19 @@ if __name__ == "__main__":
     else:
         from lm_perplexity_eval import evaluate
         print(args.use_axonn)
+        # Some issue with loading pythia with axonn
+        use_axonn_low_level_api = True
+        if args.model_type == "gptneox":
+            args.use_axonn = False
+
+        if args.model_id == "mistralai/Mixtral-8x22B-v0.1" or args.use_h2o:
+            use_axonn_low_level_api = False
         ppl = evaluate(model_id=args.model_id,
                     dataset=args.dataset,
                     sequence_length=args.sequence_length,
                     use_axonn=args.use_axonn,
                     past_key_values=cache,
-                    axonn_low_level_api=True)
+                    axonn_low_level_api=use_axonn_low_level_api)
 
         print(ppl)
         if methods.LOGGER is not None:
