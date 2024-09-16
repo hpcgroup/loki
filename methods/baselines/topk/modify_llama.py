@@ -67,11 +67,17 @@ def get_top_k_forward(args):
         if methods.G_TENSOR_SAVER is not None:
             if AXONN_AVAILABLE and ax.is_initialized:
                 key_tensor_to_save = gather(key_states, transpose=True, dim=1, skip_batch=True)
+                query_tensor_to_save = gather(query_states, transpose=True, dim=1, skip_batch=True) 
+                value_tensor_to_save = gather(value_states, transpose=True, dim=1, skip_batch=True)
                 if torch.distributed.get_rank() == 0:
                     methods.G_TENSOR_SAVER.save("key", key_tensor_to_save, self.layer_idx, "prerotary")
+                    methods.G_TENSOR_SAVER.save("query", query_tensor_to_save, self.layer_idx, "prerotary")
+                    methods.G_TENSOR_SAVER.save("value", value_tensor_to_save, self.layer_idx, "prerotary")
                 del key_tensor_to_save
             else:
                 methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
+                methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
+                methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
 
             #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
             #methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
@@ -89,11 +95,14 @@ def get_top_k_forward(args):
         if methods.G_TENSOR_SAVER is not None:
             if AXONN_AVAILABLE and ax.is_initialized:
                 key_tensor_to_save = gather(key_states, transpose=True, dim=1, skip_batch=True)
+                query_tensor_to_save = gather(query_states, transpose=True, dim=1, skip_batch=True)
                 if torch.distributed.get_rank() == 0:
                     methods.G_TENSOR_SAVER.save("key", key_tensor_to_save, self.layer_idx, "postrotary")
+                    methods.G_TENSOR_SAVER.save("query", query_tensor_to_save, self.layer_idx, "postrotary")
                 del key_tensor_to_save
             else:
                 methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "postrotary")
+                methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
             #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)

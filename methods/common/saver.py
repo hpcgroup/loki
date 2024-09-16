@@ -9,6 +9,12 @@ CATEGORY_TO_BASEFILE = {
   "attn_weights" : "tensor_attn_weights_",
 }
 
+SAVE_TENSORS = {
+    "key" : True,
+    "query" : True,
+    "value" : True,
+}
+
 class TensorSaver:
     def __init__(self, output_dir):
         self.output_dir = output_dir
@@ -20,6 +26,9 @@ class TensorSaver:
     def save(self, category, tensor, extra_idx = None, extra_dir = ""):
         # Only save the tensor if the rank is 0
         if torch.distributed.get_rank() != 0:
+            return
+        
+        if not SAVE_TENSORS[category]:
             return
         # Print the first time the function is called
         if self.index_dict[category] == 0:

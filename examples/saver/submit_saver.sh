@@ -57,7 +57,7 @@ echo "Running model ${MODEL} with for saving with top-k ${TOPK}"
 
 SAVE_ARGS=""
 if [ "$SAVE" = true ]; then
-  OUT_TENSOR_DATA_PATH="${SCRATCH}/InferenceData/topk/${MODEL_NAME}/${TOPK}/${DATASET}/"
+  OUT_TENSOR_DATA_PATH="${CFS}/m4641/ApproxAttn/raw_tensors/${MODEL_NAME}/${TOPK}/${DATASET}/"
   mkdir -p $OUT_TENSOR_DATA_PATH
   SAVE_ARGS="--save-tensors --tensors-dir ${OUT_TENSOR_DATA_PATH}"
 fi

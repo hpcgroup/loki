@@ -300,8 +300,12 @@ def benchmark_attention(batch_size=1,
                         num_gen_steps=128,
                         prompt_length=3072,
                         topk=256,
+                        topr=32,
                         num_layers=32,
-                        dtype=torch.float16):
+                        dtype=torch.float16,
+                        vanilla=True,
+                        pcatopk=True,
+                        ):
 
     head_dim=128
     # Change this to change batch size, etc.
@@ -315,55 +319,66 @@ def benchmark_attention(batch_size=1,
     #micro_benchmark_pca_topk(cache1, prompt_keys, 32, topk, num_gen_steps=num_gen_steps)
     #del cache1
 
-    
-    print("PCA TOPK Optimized")
-    for _ in range(10):
-        cache2 = PcaTopKCache()
-        for i in range(num_layers):
-            cache2.update(prompt_keys[i].transpose(0,1).contiguous(), 
-                          prompt_keys[i].transpose(0,1).contiguous(), 
-                          prompt_keys[i].transpose(0,1).contiguous(), i)
-        timers = Timers()
-        micro_benchmark_pca_topk(cache2, prompt_keys, 32, topk, 
-                                 num_gen_steps=num_gen_steps, num_layers=num_layers, 
-                                 use_optimised_gather=True, timers=timers)
-        del cache2
-        times = timers.get_times()
-        print(times)
-    
-    print("Average time (minus cache updates) is - ")
-    print(times['total'] - times['cache-update'], " s")
-    print("==================================")
-    times_pca_topk = times    
 
-    print("Actual Attention")
-    for _ in range(10):
-        cache3= PcaTopKCache()
-        for i in range(num_layers):
-            cache3.update(prompt_keys[i], prompt_keys[i], prompt_keys[i], i)
-        timers = Timers()
-        micro_bench_actual_attention(cache3, prompt_keys, num_layers=num_layers, 
-                                     num_gen_steps=num_gen_steps, timers=timers)
-        del cache3
-        times = timers.get_times()
-    print("Average time (minus cache updates) is - ")
-    print(times['total'] - times['cache-update'], " s")
-    print(times)
-    print("==================================")
-    times_vanilla = times
+
+    times_pca_topk = None
+    if pcatopk:
+        print("PCA TOPK Optimized")
+        for _ in range(10):
+            cache2 = PcaTopKCache()
+            for i in range(num_layers):
+                cache2.update(prompt_keys[i].transpose(0,1).contiguous(), 
+                              prompt_keys[i].transpose(0,1).contiguous(), 
+                              prompt_keys[i].transpose(0,1).contiguous(), i)
+            timers = Timers()
+            micro_benchmark_pca_topk(cache2, prompt_keys, topr, topk, 
+                                     num_gen_steps=num_gen_steps, num_layers=num_layers, 
+                                     use_optimised_gather=True, timers=timers)
+            del cache2
+            times = timers.get_times()
+            print(times)
+    
+        print("Average time (minus cache updates) is - ")
+        print(times['total'] - times['cache-update'], " s")
+        print("==================================")
+        times_pca_topk = times    
+
+
+    times_vanilla = None
+    if vanilla:
+        print("Actual Attention")
+        for _ in range(10):
+            cache3= PcaTopKCache()
+            for i in range(num_layers):
+                cache3.update(prompt_keys[i], prompt_keys[i], prompt_keys[i], i)
+            timers = Timers()
+            micro_bench_actual_attention(cache3, prompt_keys, num_layers=num_layers, 
+                                         num_gen_steps=num_gen_steps, timers=timers)
+            del cache3
+            times = timers.get_times()
+        print("Average time (minus cache updates) is - ")
+        print(times['total'] - times['cache-update'], " s")
+        print(times)
+        print("==================================")
+        times_vanilla = times
     return times_pca_topk, times_vanilla
 
 if __name__ == "__main__":
     #test_pcatopk_cache()
     with torch.no_grad():
-        prompt_length = 2000
-        for num_gen_steps in [1000]:
-            print(f"prompt length = {prompt_length}, gen length = {num_gen_steps}, batch_size={16}, topk and top r are 25%")
-            times_pca_topk, times_vanilla = benchmark_attention(prompt_length=prompt_length, num_gen_steps=num_gen_steps, batch_size=16, topk=prompt_length // 4, num_layers=1)
-            with open(f"prompt_{prompt_length}_gen_{num_gen_steps}_pca_topk_opt_first_matmul.json", "w") as f:
-                json.dump(times_pca_topk, f, indent=2)
+        prompt_length = 3500
+        for num_gen_steps in [512]:
+            for topk in [2, 4, 8]:
+                for topr in [2, 4, 8]:
+                    print(f"prompt length = {prompt_length}, gen length = {num_gen_steps}, batch_size={16}, topk={topk} and topr={topr}")
+                    times_pca_topk, _ = benchmark_attention(prompt_length=prompt_length, num_gen_steps=num_gen_steps, batch_size=16, topk=prompt_length // topk, topr=128 // topr, vanilla=False)
+                    #with open(f"prompt_{prompt_length}_gen_{num_gen_steps}_pca_topk_opt_first_matmul.json", "w") as f:
+                    with open(f"compute_files/prompt_{prompt_length}_gen_{num_gen_steps}_topk_{topk}_topr_{topr}.json", "w") as f:
+                        json.dump(times_pca_topk, f, indent=2)
 
-            with open(f"prompt_{prompt_length}_gen_{num_gen_steps}_vanilla.json", "w") as f:
+            _, times_vanilla = benchmark_attention(prompt_length=prompt_length, num_gen_steps=num_gen_steps, batch_size=16, topk=prompt_length // topk, topr=128 // topr, pcatopk=False)
+            with open(f"compute_files/prompt_{prompt_length}_gen_{num_gen_steps}_vanilla.json", "w") as f:
                 json.dump(times_vanilla, f, indent=2)
+
     
 
