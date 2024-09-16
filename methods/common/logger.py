@@ -15,8 +15,9 @@ class WandbLogger:
                 groupid = "lm_harness"
             else:
                 groupid = "ppl"
-            self.run = wandb.init(project='PCA-TopK', config=self.config, name=jobid, 
+            self.run = wandb.init(project='Loki', config=self.config, name=jobid, 
                                   group=groupid, job_type='eval', tags=[groupid])
+            wandb.define_metric("compression_ratio", summary="mean")
     
     def update_config(self, kwargs):
         if self.rank == '0':
@@ -53,6 +54,9 @@ class NoOpLogger:
         pass
 
     def log(self, kwargs):
+        pass
+
+    def log_ppl(self, ppl):
         pass
     
     def finish(self):

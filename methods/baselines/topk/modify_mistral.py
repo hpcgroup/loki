@@ -13,6 +13,13 @@ from functools import partial
 from methods.common.utils import mask_attn_top_k
 import methods
 
+try:
+    from axonn import axonn as ax
+    from axonn.intra_layer import gather
+    AXONN_AVAILABLE=True
+except ImportError:
+    AXONN_AVAILABLE=False
+
 def get_top_k_forward(args):
     def modified_forward(
         self,
@@ -39,9 +46,19 @@ def get_top_k_forward(args):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         if methods.G_TENSOR_SAVER is not None:
-            methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
-            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
-            #methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
+            if AXONN_AVAILABLE and ax.is_initialized:
+                key_tensor_to_save = gather(key_states, transpose=True, dim=1, skip_batch=True)
+                query_tensor_to_save = gather(query_states, transpose=True, dim=1, skip_batch=True) 
+                value_tensor_to_save = gather(value_states, transpose=True, dim=1, skip_batch=True)
+                if torch.distributed.get_rank() == 0:
+                    methods.G_TENSOR_SAVER.save("key", key_tensor_to_save, self.layer_idx, "prerotary")
+                    methods.G_TENSOR_SAVER.save("query", query_tensor_to_save, self.layer_idx, "prerotary")
+                    methods.G_TENSOR_SAVER.save("value", value_tensor_to_save, self.layer_idx, "prerotary")
+                del key_tensor_to_save
+            else:
+                methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
+                methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
+                methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
@@ -60,9 +77,16 @@ def get_top_k_forward(args):
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         if methods.G_TENSOR_SAVER is not None:
-            methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "postrotary")
-            #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
-
+            if AXONN_AVAILABLE and ax.is_initialized:
+                key_tensor_to_save = gather(key_states, transpose=True, dim=1, skip_batch=True)
+                query_tensor_to_save = gather(query_states, transpose=True, dim=1, skip_batch=True)
+                if torch.distributed.get_rank() == 0:
+                    methods.G_TENSOR_SAVER.save("key", key_tensor_to_save, self.layer_idx, "postrotary")
+                    methods.G_TENSOR_SAVER.save("query", query_tensor_to_save, self.layer_idx, "postrotary")
+                del key_tensor_to_save
+            else:
+                methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "postrotary")
+                methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "postrotary")
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)

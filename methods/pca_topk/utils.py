@@ -13,7 +13,8 @@ except ImportError:
 PCA_DATA_PATH = "/pscratch/sd/p/prajwal/InferenceData"
 #PCA_DATA_PATH = "/global/cfs/cdirs/m4641/ApproxAttn/"
 
-def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, repeat_kv):
+def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, repeat_kv, device = None):
+    print (f"Getting pca components - {args.model_id}")
     model_folder_name = args.model_id.split("/")[-1] + "-PCA"
     rotary_type = args.rotary_type
     transform_dataset = args.transform_dataset
@@ -25,13 +26,16 @@ def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, r
     #methods.LOGGER.update_config({"components_file_path": os.path.dirname(components_file_path)})
 
     # PCA Components with the shape (num_heads, head_dim, top_r)
-    pca_components = torch.load(components_file_path).to("cuda")
+    if device is None:
+        device = "cuda"
+
+    pca_components = torch.load(components_file_path).to(device)
 
     # PCA Means with the shape (num_heads, head_dim)
-    pca_means = torch.load(mean_file_path).to("cuda")
+    pca_means = torch.load(mean_file_path).to(device)
 
     # Explained Variance with the shape (num_heads, head_dim)
-    pca_explained_variance = torch.load(explained_variance_file_path).to("cuda")
+    pca_explained_variance = torch.load(explained_variance_file_path).to(device)
 
     # Reshaping the components and taking a transpose to have components along the column dimension and means to be easily broadcastable over the keys
     pca_components = pca_components.reshape(1, -1, head_dim, head_dim).transpose(2, 3)
@@ -63,7 +67,7 @@ def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, r
     print ("Compression Ratio: {}".format(top_correct_r / head_dim))
 
     if methods.LOGGER is not None:
-        methods.LOGGER.update_config({"Compression Ratio": top_correct_r / head_dim})
+        methods.LOGGER.log({"compression_ratio": top_correct_r / head_dim})
 
     if AXONN_AVAILABLE and ax.is_initialized:
         print ("Dropping PCA Components and PCA Means")
