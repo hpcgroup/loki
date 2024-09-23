@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from functools import partial
 
 from .utils import mask_attn_pca_topk, get_pca_components
-import methods.pca_topk.external.gather_matmul as G
+import methods.pca_topk.kernel.external.gather_matmul as G
 import methods.pca_topk.kernel.pca_topk as G
 from methods.common.timers import Timers
 import methods

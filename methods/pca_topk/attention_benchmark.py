@@ -3,33 +3,22 @@ from typing import Any, Dict, List, Optional, Tuple
 from transformers.cache_utils import Cache
 import math
 import time
-
 import torch
-#import external.gather_matmul as G
-import kernel.pca_topk as G
-
-
-topk_time = 0
-iter_num = 0
-torch.backends.cuda.matmul.allow_tf32 = False
-
-# The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
-torch.backends.cudnn.allow_tf32 = False
-
-from timers import Timers
+import methods.pca_topk.kernel.pca_topk as G
+from methods.common.timers import Timers
 import json
 
-# Work In Progress
+# This was earlier supposed to be a specific Cache class for PCA TopK mechanism
+# But now it just reimplements the Cache class from transformers.cache_utils
+# TODO: Remove this class
 class PcaTopKCache(Cache): # Not used anymore
     """
     Cache based on PcaTopK mechanism
+    Note: This class is now just a wrapper around the Cache class from transformers.cache_utils
     """
     def __init__(self) -> None:
         self.key_cache: List[torch.Tensor] = [] # Stores the reduced keys for each layer
         self.value_cache: List[torch.Tensor] = []
-        #self.top_r = r 
-        #self.top_k = k
-        #print (f"Cache initialized with top_r = {r}, top_k = {k}")
 
     @torch.no_grad()
     def update(
@@ -60,46 +49,16 @@ class PcaTopKCache(Cache): # Not used anymore
         """
         if len(self.key_cache) <= layer_idx:
             # Empty cache
-            # Assume that the keys are alread in the PCA space
             self.key_cache.append(key_states)
             self.value_cache.append(value_states)
             
             # This is also the prompt iteration so we need all the keys for attention
             return self.key_cache[layer_idx], self.value_cache[layer_idx]
         else:
-            #global topk_time
-            #global iter_num
-            #start = time.time()
-            ## Growing cache
             self.key_cache[layer_idx] = torch.cat([self.key_cache[layer_idx], key_states], dim=-2)
             self.value_cache[layer_idx] = torch.cat([self.value_cache[layer_idx], value_states], dim=-2)          
 
             return self.key_cache[layer_idx], self.value_cache[layer_idx]
-
-            if not topk:
-                return self.key_cache[layer_idx], self.value_cache[layer_idx]
-
-            # Compute approximate attention scores assuming that keys and queries are already in PCA space
-            #query_states_pca = query_states[:, :, :, :self.top_r]
-            #key_states_pca = self.key_cache[layer_idx][:, :, :, :self.top_r]
-
-            #head_dim = query_states.shape[-1]
-            scaling_factor = head_dim * torch.sqrt((torch.square(key_states_pca).sum(-1 , keepdim=True) / torch.square(self.key_cache[layer_idx]).sum(-1, keepdim = True)))
-            scaling_factor = scaling_factor.transpose(-1, -2)
-
-            attn_weights = torch.matmul(query_states[:,:,:,:self.top_r], self.key_cache[layer_idx][:,:,:,:self.top_r].transpose(2, 3)) / math.sqrt(head_dim)
-
-            # Get top-k keys and top-k values based on the attention scores
-            ################# Unoptimized Version
-            # key_states_topk_indices = torch.topk(attn_weights, self.top_k, dim=-1).indices
-            # key_states_topk_indices = key_states_topk_indices.transpose(-1, -2).expand(-1, -1, -1, head_dim)
-
-            # key_states_topk = torch.gather(self.key_cache[layer_idx], -2, key_states_topk_indices)
-            # value_states_topk = torch.gather(self.value_cache[layer_idx], -2, key_states_topk_indices)
-            ##################
-
-
-            return key_states_topk, value_states_topk
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
@@ -123,27 +82,8 @@ class PcaTopKCache(Cache): # Not used anymore
         return previous_seq_length
 
     def reset(self):
-        self.key_cache: List[torch.Tensor] = [] # Stores the reduced keys for each layer
+        self.key_cache: List[torch.Tensor] = [] 
         self.value_cache: List[torch.Tensor] = []
-
-def test_pcatopk_cache():
-    cache = PcaTopKCache(2, 4)
-
-    torch.set_printoptions(threshold=float('inf'))
-    prompt_keys = torch.rand(1, 2, 8, 8)
-    print (prompt_keys)
-
-    cache.update(prompt_keys, prompt_keys, prompt_keys, 0)
-
-    generative_query = torch.rand(1, 2, 1, 8)
-    generative_key = torch.rand(1, 2, 1, 8)
-
-    top_keys, top_vals = cache.update(generative_key, generative_key, generative_query, 0)
-
-    print (f"Top K Keys: {top_keys.shape}")
-    print (top_keys)
-
-
 
 def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timers,
                              num_gen_steps=2000, use_optimised_gather=False):
@@ -182,7 +122,6 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
                 timers.stop('cache-update')
 
                 timers.start('qk-matmul-1')
-                #attn_weights = torch.matmul(generative_query[:,:,:,:top_r], keys.transpose(2, 3)[:,:,:top_r,:]) / math.sqrt(head_dim)
                 nh, bs, s, r = keys.shape
                 attn_weights = G.topr_bmv_optimized(A=generative_query.view(nh*bs, 1, r), B=keys.view(nh*bs, s, r).transpose(-1,-2), 
                                                     r=top_r)
@@ -191,8 +130,6 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
 
                 # Get top-k keys and top-k values based on the attention scores
                 timers.start('top-k')
-                #key_states_topk_indices = torch.topk(attn_weights, top_k, dim=-1, sorted=False).indices.to("cuda")
-                #key_states_topk_indices,_ = torch.sort(key_states_topk_indices, dim=-1)
                 key_states_topk_indices = torch.argsort(attn_weights, dim=-1, descending=True)[:,:,:,:top_k]
                 timers.stop('top-k')
 
@@ -362,23 +299,4 @@ def benchmark_attention(batch_size=1,
         print("==================================")
         times_vanilla = times
     return times_pca_topk, times_vanilla
-
-if __name__ == "__main__":
-    #test_pcatopk_cache()
-    with torch.no_grad():
-        prompt_length = 3500
-        for num_gen_steps in [512]:
-            for topk in [2, 4, 8]:
-                for topr in [2, 4, 8]:
-                    print(f"prompt length = {prompt_length}, gen length = {num_gen_steps}, batch_size={16}, topk={topk} and topr={topr}")
-                    times_pca_topk, _ = benchmark_attention(prompt_length=prompt_length, num_gen_steps=num_gen_steps, batch_size=16, topk=prompt_length // topk, topr=128 // topr, vanilla=False)
-                    #with open(f"prompt_{prompt_length}_gen_{num_gen_steps}_pca_topk_opt_first_matmul.json", "w") as f:
-                    with open(f"compute_files/prompt_{prompt_length}_gen_{num_gen_steps}_topk_{topk}_topr_{topr}.json", "w") as f:
-                        json.dump(times_pca_topk, f, indent=2)
-
-            _, times_vanilla = benchmark_attention(prompt_length=prompt_length, num_gen_steps=num_gen_steps, batch_size=16, topk=prompt_length // topk, topr=128 // topr, pcatopk=False)
-            with open(f"compute_files/prompt_{prompt_length}_gen_{num_gen_steps}_vanilla.json", "w") as f:
-                json.dump(times_vanilla, f, indent=2)
-
-    
 
