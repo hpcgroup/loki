@@ -62,7 +62,7 @@ if [ "$SAVE" = true ]; then
   SAVE_ARGS="--save-tensors --tensors-dir ${OUT_TENSOR_DATA_PATH}"
 fi
 
-run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh python -u eval_ppl.py --use-axonn --sequence-length ${SEQ_LEN}\
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh python -u evaluate_tasks.py --use-axonn --sequence-length ${SEQ_LEN}\
         --model-id ${MODEL} --model-type ${MODEL_TYPE} --dataset ${DATASET}\
         ${SAVE_ARGS}\
         --dataset ${DATASET}

@@ -66,7 +66,7 @@ echo "Sequence Length: ${SEQ_LEN}"
 echo "Output Path: ${OUT_FILE_PATH}"
 echo "Running model ${MODEL} with PCA Attention and top-r ${TOPR} and top-k ${TOPK}"
 
-run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh python -u eval_ppl.py --use-axonn --sequence-length ${SEQ_LEN}\
+run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh python -u evaluate_tasks.py --use-axonn --sequence-length ${SEQ_LEN}\
         --model-id ${MODEL} --model-type ${MODEL_TYPE}\
         ${WANDB_ARGS}\
         --rotary-type ${ROTARY}\
@@ -74,7 +74,7 @@ run_cmd="srun -C gpu -N ${NNODES} -n ${GPUS} -c 32 --cpu-bind=cores --gpus-per-n
 
 
       
-#run_cmd="srun -N 1 ./set_env_vars_slurm.sh python -u eval_ppl.py --use-axonn --sequence-length ${SEQ_LEN}\
+#run_cmd="srun -N 1 ./set_env_vars_slurm.sh python -u evaluate_tasks.py --use-axonn --sequence-length ${SEQ_LEN}\
 #        --model-id ${MODEL} --model-type ${MODEL_TYPE}\
 #        ${WANDB_ARGS}\
 #        --use-pca-topk --top-r ${TOPR} --top-k ${TOPK} ${EVAL} | tee ${OUT_FILE_PATH}/out_${MODEL_NAME}_${TOPR}_${TOPK}${EVAL}.out 2>&1"

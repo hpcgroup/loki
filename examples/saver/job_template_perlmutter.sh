@@ -58,7 +58,7 @@ if [ "$SAVE" = true ]; then
 fi
 
 run_cmd="srun -C gpu -N $NNODES -n $GPUS -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh\
-        python -u eval_ppl.py --sequence-length $SEQ_LEN --model-id ${MODEL} --model-type ${MODEL_TYPE}\
+        python -u evaluate_tasks.py --sequence-length $SEQ_LEN --model-id ${MODEL} --model-type ${MODEL_TYPE}\
         --dataset $DATASET ${SAVE_ARGS} --use-topk --top-k $TOPK $AXONN_ARGS"
 
 echo $run_cmd

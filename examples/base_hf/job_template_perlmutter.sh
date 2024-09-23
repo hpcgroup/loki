@@ -54,7 +54,7 @@ echo "Output Path: $OUT_FILE_PATH"
 echo "Running model $MODEL"
 
 run_cmd="srun -C gpu -N $NNODES -n $GPUS -c 32 --cpu-bind=cores --gpus-per-node=4 ./set_env_vars_slurm.sh\
-        python -u eval_ppl.py --sequence-length $SEQ_LEN --model-id $MODEL --model-type $MODEL_TYPE\
+        python -u evaluate_tasks.py --sequence-length $SEQ_LEN --model-id $MODEL --model-type $MODEL_TYPE\
         $AXONN_ARGS $WANDB_ARGS $EVAL_ARGS"
 
 echo $run_cmd

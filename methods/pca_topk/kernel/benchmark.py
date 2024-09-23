@@ -2,7 +2,7 @@ import torch
 import triton
 import numpy as np
 from pca_topk import gather_outer_bmv_optimized, gather_inner_matrix_only_bmv_optimized
-from sparq import gather_outer_bmv, gather_inner_matrix_only_bmv
+from methods.pca_topk.kernel.external.sparq import gather_outer_bmv, gather_inner_matrix_only_bmv
 
 B = 4
 NH = 32
