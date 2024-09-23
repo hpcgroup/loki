@@ -10,15 +10,8 @@ def get_topk_args(parser):
     parser.add_argument("--top-k", type=float, default=-1, help="top k tokens to consider - >1 exact number, <1 fraction of tokens to consider," "set to -1 to use all tokens")
     return parser
 
-def get_spar_args(parser):
-    parser.add_argument("--use-sparq", action='store_true', default=False, help="use the Spar algos")
-    parser.add_argument("--use-spark", action='store_true', default=False, help="use the Spar algos")
-    parser.add_argument("--use-spar-hat", action='store_true', default=False, help="use the Spar Hat algo")
-    parser.add_argument("--top-r", type=float, default=-1, help="top r channels to consider," "set to -1 to use all channels")
-    return parser
-
 def get_pca_args(parser):
-    parser.add_argument("--use-pca", action='store_true', default=False, help="use the PCA algos")
+    parser.add_argument("--top-r", type=float, default=-1, help="top r channels to consider," "set to -1 to use all channels")
     parser.add_argument("--use-pca-topk", action='store_true', default=False, help="use the PCA TopK algos")
     parser.add_argument("--rotary-type", type=str, default="postrotary", help="rotary type")
     parser.add_argument("--recent-ratio", type=float, default=-1, help="PcaTopK recent ratio," "set to -1 by default")
@@ -38,18 +31,6 @@ def get_modifier(args):
     elif args.use_h2o:
         method_name = "h2o"
         module_name = ".baselines.h2o.modify_" + args.model_type
-    elif args.use_sparq:
-        method_name = "sparq"
-        module_name = ".baselines.sparq.modify_" + args.model_type
-    elif args.use_spark:
-        method_name = "spark"
-        module_name = ".spark.modify_" + args.model_type
-    elif args.use_spar_hat:
-        method_name = "sparhat"
-        module_name = ".parhat.modify_" + args.model_type
-    elif args.use_pca:
-        method_name = "pca"
-        module_name = ".pca.modify_" + args.model_type
     elif args.use_pca_topk:
         method_name = "pca_topk"
         module_name = ".pca_topk.modify_" + args.model_type
@@ -68,23 +49,12 @@ def get_config_dict(args):
     if args.use_h2o:
         config_dict["method"] = "h2o"
         config_dict["heavy_ratio"] = args.heavy_ratio
+        if args.recent_ratio != -1:
+            print ("[WARNING] Recent Ratio is override by Heavy Ratio for H2O")
+        config_dict["recent_ratio"] = args.heavy_ratio
     elif args.use_topk:
         config_dict["method"] = "topk"
         config_dict["top_k"] = args.top_k
-    elif args.use_spark:
-        config_dict["method"] = "spark"
-        config_dict["top_r"] = args.top_r
-        config_dict["top_k"] = args.top_k
-    elif args.use_sparq:
-        config_dict["method"] = "sparq"
-        config_dict["top_r"] = args.top_r
-        config_dict["top_k"] = args.top_k
-    elif args.use_spar_hat:
-        config_dict["method"] = "spar_hat"
-        config_dict["top_r"] = args.top_r
-    elif args.use_pca:
-        config_dict["method"] = "pca"
-        config_dict["top_r"] = args.top_r
     elif args.use_pca_topk:
         config_dict["method"] = "pca_topk"
         config_dict["top_r"] = args.top_r
