@@ -14,8 +14,6 @@ from transformers import pipeline
 from huggingface_hub import login
 
 
-login("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")
-
 #torch.manual_seed(42)
 #torch.cuda.manual_seed(42)
 #np.random.seed(42)
@@ -40,7 +38,6 @@ if __name__ == "__main__":
 
     parser = get_h2o_args(parser)
     parser = get_topk_args(parser)
-    parser = get_spar_args(parser)
     parser = get_pca_args(parser)
     args = parser.parse_args()
 
@@ -52,8 +49,6 @@ if __name__ == "__main__":
 
 
     modifier_method = get_modifier(args)
-    #if modifier_method is None:
-    #    raise ValueError("Modifier method not found")
 
     print (modifier_method)
 
