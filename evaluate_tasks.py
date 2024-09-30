@@ -2,6 +2,7 @@ from methods import init_tensor_saver
 from methods.common.configure_model import get_h2o_args, get_topk_args, get_pca_args, get_save_tensor_args
 from methods.common.configure_model import get_modifier
 from methods import init_logger, finish_logger
+from methods.common.ppl import get_model, evaluate_ppl
 import methods
 
 import argparse
@@ -28,7 +29,7 @@ if __name__ == "__main__":
     parser.add_argument("--sequence-length", type=int, default=4096, help="sequence length")
     parser.add_argument("--use-axonn", action='store_true', default=False, help="shard a model using AxoNN")
     parser.add_argument("--lm-harness-eval", action='store_true', default=False, help="use lm harness eval")
-    parser.add_argument("--dataset", type=str, default="wikitext-test", help="dataset - wikitext, bookcorpus, c4")
+    parser.add_argument("--dataset", type=str, default="wikitext-test", help="dataset - wikitext-test, wikitext-valid, bookcorpus, c4")
     parser.add_argument("--use-wandb", action='store_true', default=False, help="use wandb")
 
     # Get Method Specific Arguments
@@ -50,9 +51,8 @@ if __name__ == "__main__":
         print (modifier_method)
         modifier_method(args)
     
-    if args.lm_harness_eval:
+    if args.lm_harness_eval: # Use lm harness eval
         import lm_eval
-        from lm_perplexity_eval import evaluate
         use_axonn_low_level_api = True
 
         if args.model_type == "gptneox":
@@ -67,14 +67,11 @@ if __name__ == "__main__":
             del LM_HARNESS_TASKS["gsm8k"]
 
         if args.use_axonn:
-            # TODO: This is a hack to get the model from the evaluate function. Ideally, this should be refactored to a separate function
-            model = evaluate(model_id=args.model_id,
-                        dataset=args.dataset,
-                        sequence_length=args.sequence_length,
+            # If using axonn, we need to load the model and shard it before passing it to lm_eval
+            model = get_model(model_id=args.model_id,
                         use_axonn=args.use_axonn,
-                        past_key_values=None,
-                        axonn_low_level_api=use_axonn_low_level_api,
-                        return_model=True)
+                        axonn_low_level_api=use_axonn_low_level_api)
+
             results = lm_eval.simple_evaluate(
                 model = "hf",
                 model_args={"pretrained": model},
@@ -95,16 +92,17 @@ if __name__ == "__main__":
             print(results["results"])
             if methods.LOGGER is not None:
                 methods.LOGGER.log_lm_harness_results(LM_HARNESS_TASKS, results["results"])
-    else:
-        from lm_perplexity_eval import evaluate
+    else: # Use PPL Evaluation
         # Some issue with loading pythia with axonn
         use_axonn_low_level_api = True
         if args.model_type == "gptneox":
             args.use_axonn = False
 
+        # Low level API not available for Mixtral or in the H2O modification
         if args.model_id == "mistralai/Mixtral-8x22B-v0.1" or args.use_h2o:
             use_axonn_low_level_api = False
-        ppl = evaluate(model_id=args.model_id,
+
+        ppl = evaluate_ppl(model_id=args.model_id,
                     dataset=args.dataset,
                     sequence_length=args.sequence_length,
                     use_axonn=args.use_axonn,

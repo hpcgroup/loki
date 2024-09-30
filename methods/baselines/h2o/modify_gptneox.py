@@ -92,7 +92,6 @@ def get_h2o_attn(args):
     return modified_attn
 
 def make_gptneox_attention_h2o(args):
-    #TODO: Maybe we should not use fractions here to be consistent with other methods
     print ("Modifying GPT NeoX Attention -> H2O")
     print (f"Heavy and Recent Ratio:{args.heavy_ratio}")
     GPTNeoXAttention._attn = get_h2o_attn(args)

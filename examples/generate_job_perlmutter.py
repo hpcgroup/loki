@@ -116,7 +116,8 @@ parser.add_argument('--models', type=str, nargs='+', choices=models.keys(), defa
 parser.add_argument('--eval-task', type=str, choices=["ppl", "lm_harness"]) 
 parser.add_argument('--use-wandb', action='store_true', default=False, help="use wandb")
 parser.add_argument('--use-axonn', action='store_true', default=False, help="shard a model using AxoNN")
-parser.add_argument('--target-dataset', type=str, choices=DATASETS, default="")
+parser.add_argument('--eval-dataset', type=str, choices=DATASETS, default="")
+parser.add_argument('--transform-dataset', type=str, choices=DATASETS, default="")
 parser.add_argument('--topk-list', type=float, nargs='+', default=TOPK_VALUES)
 parser.add_argument('--topd-list', type=int, nargs='+', default=TOPD_VALUES)
 args = parser.parse_args()
@@ -128,8 +129,8 @@ template_file = os.path.join(examples_dir, f"{args.exp}", "job_template_perlmutt
 
 def get_config_list(args):
     base_dict = {}
-    if args.target_dataset != "":
-        base_dict["tdataset"] = args.target_dataset
+    if args.eval_dataset != "":
+        base_dict["tdataset"] = args.eval_dataset
     if args.exp == "base_hf" or args.exp == "saver":
         config = [base_dict]
     if args.exp == "topk":
@@ -137,15 +138,17 @@ def get_config_list(args):
     if args.exp == "h2o":
         config = [base_dict | {"heavy_ratio": heavy_ratio} for heavy_ratio in args.topk_list]
     if args.exp == "pca_topk":
+        if args.transform_dataset != "":
+            base_dict["transform_dataset"] = args.transform_dataset
         config = [base_dict | {"top_k": topk, "top_r": topd, "rotary_type": rotary} for topk in args.topk_list for topd in args.topd_list for rotary in ROTARY_VALUES]
     return config
   
 
 # Some basic assertions
 if args.exp == "saver" or args.exp == "pca_topk":
-    assert args.target_dataset != "", "Target dataset is required for saver and pca_topk experiments"
+    assert args.eval_dataset != "", "Target dataset is required for saver and pca_topk experiments"
 else:
-    assert args.target_dataset == "", "Target dataset is not required for this experiment"
+    assert args.eval_dataset == "", "Target dataset is not required for this experiment"
 
 if args.exp == "saver":
     assert args.eval_task != "lm_harness", "lm_harness is not supported for saver"

@@ -115,7 +115,7 @@ def get_h2o_forward(args):
     return modified_forward
 
 def make_mistral_attention_h2o(args):
-    #TODO: Maybe we should not use fractions here to be consistent with other methods
+    #TODO: Support H2O opt for Mixtral large models
     print ("Modifying Mistral and Mixtral Attention -> H2O")
     print (f"Heavy and Recent Ratio:{args.heavy_ratio}")
     MistralAttention.forward = get_h2o_forward(args)
