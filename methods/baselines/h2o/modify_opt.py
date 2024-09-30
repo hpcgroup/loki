@@ -156,7 +156,6 @@ def get_h2o_forward(args):
 
 
 def make_opt_attention_h2o(args):
-    #TODO: Maybe we should not use fractions here to be consistent with other methods
     print ("Modifying OPT Attention -> H2O")
     print (f"Heavy and Recent Ratio:{args.heavy_ratio}")
     OPTAttention.forward = get_h2o_forward(args)
