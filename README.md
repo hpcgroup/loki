@@ -40,15 +40,26 @@ python -u evaluate_tasks.py \
   --sequence-length 4096 \
   --model-id meta-llama/Llama-2-7b-hf \
   --model-type llama 
-  --use-pca-topk --top-r <16/32/64> --top-k <0.125/0.25/0.5> \
+  --use-pca-topk 
+  --top-r <16/32/64> 
+  --top-k <0.125/0.25/0.5> \
   --rotary-type <prerotary/postrotary> \
-  --dataset <Dataset to compute perplexity on, Default: wikitext-test>\
-  --transform-dataset <Dataset used to compute PCA keys: wikitext/bookcorpus/c4, Default:wikitext>\
-  [--lm-harness-eval]\ # Flag to evaluate the model on the LM Harness Tasks
-  [--use-wandb]\ # Optional flag to log the results to wandb
+  --dataset <Dataset to compute perplexity on, Default: wikitext-test> \
+  --transform-dataset <Dataset used to compute PCA: wikitext/bookcorpus/c4, Default:wikitext> \
+  [--lm-harness-eval] \ # Flag to evaluate the model on the LM Harness Tasks
+  [--use-wandb] \ # Optional flag to log the results to wandb
   [--use-axonn] # Optional flag to shard the model over multiple GPUs using AxoNN
 ```
 
+
+#### Running compute evaluation
+To run the compute evaluation, you can use the following command:
+
+```bash
+python evaluate_compute.py
+
+```
+This will run the attention benchmark with Loki and vanilla attention assuming a Llama2-13B type model and save the results in a `compute_files` directory.
 
 <!---
 #### Reproducing the results

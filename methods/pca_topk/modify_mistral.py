@@ -105,15 +105,6 @@ def get_pca_forward(args):
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
-        ## Compute cumulative sum along the desired dimension
-        #cumulative_sum = torch.cumsum(value_states, dim=2).cuda()
-
-        ## Compute the cumulative mean along the desired dimension
-        #cumulative_mean = cumulative_sum / torch.arange(1, value_states.size(2) + 1).float().unsqueeze(0).unsqueeze(1).unsqueeze(3).cuda()
-
-        #attn_output = ((1 - alpha) * cumulative_mean) + alpha * attn_output
-        #attn_output = attn_output.to(query_states.dtype)
-
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
                 f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
