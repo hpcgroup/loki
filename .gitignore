@@ -6,3 +6,7 @@ wandb/**
 methods/baselines/topk/bce928f38989812b69c6f8e3a86763e004387d16/**
 logs/**
 examples/**/perlmutter/**
+./data
+**/*.json
+**/*.txt
+**/*.pt

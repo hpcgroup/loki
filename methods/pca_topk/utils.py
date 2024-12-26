@@ -3,18 +3,62 @@ import torch
 import math
 import os
 import methods
+import math
 try:
     from axonn import axonn as ax
     from axonn.intra_layer import drop
     AXONN_AVAILABLE=True
 except ImportError:
     AXONN_AVAILABLE=False
+    
+import json
 
-PCA_DATA_PATH = "/pscratch/sd/p/prajwal/InferenceData"
+# Attention score sampling for plotting
+# Head/ layer to collect full attention for (to plot a single query)
+COLLECT_LAYER = 8
+COLLECT_HEAD = 8 
+
+MAX_SAMPLES = 100000 # Max # of samples
+SAMPLES_PER_CALL = 512 # # samples collected per call of function
+
+# Accumulators for plotting attention scores
+collected_attention_data = []
+collected_final_query_attention = []
+collected_final_query = False
+
+# Attention collectors for aggregate statistics
+n_samples = 0
+
+# Pre-softmax statistics
+sum_pre_softmax_diff_abs = sum_pre_softmax_diff_squared = 0.0
+mean_pre_softmax_full = mean_pre_softmax_approx = 0.0
+M2_pre_softmax_full = M2_pre_softmax_approx = 0.0
+C_pre_softmax = 0.0
+
+# Post-softmax statistics
+sum_post_softmax_diff_abs = sum_post_softmax_diff_squared = 0.0
+mean_post_softmax_full = mean_post_softmax_approx = 0.0
+M2_post_softmax_full = M2_post_softmax_approx = 0.0
+C_post_softmax = 0.0
+
+# Cross entropy collectors 
+total_cross_entropy = 0.0
+total_cross_entropy_samples = 0
+
+# For percentile data
+collected_query_percentile_data = []
+collected_layer_percentile_data = []
+
+# Keeping track of compression ratio
+# set to 1 to avoid div by 0 (given the # of scores starting at 1 should be negligible) 
+num_scores = kept_scores = 1
+flag = True # Used to denote when score has been collected
+
+PCA_DATA_PATH = "/pscratch/sd/n/nkoley/BhateleLab/approximate-attention/transform"
 #PCA_DATA_PATH = "/global/cfs/cdirs/m4641/ApproxAttn/"
 
 def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, repeat_kv, device = None):
-    print (f"Getting pca components - {args.model_id}")
+    # print (f"Getting pca components - {args.model_id}")
     model_folder_name = args.model_id.split("/")[-1] + "-PCA"
     rotary_type = args.rotary_type
     transform_dataset = args.transform_dataset
@@ -62,15 +106,15 @@ def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, r
         pca_components = repeat_kv(pca_components, num_key_value_groups)
 
 
-    print ("{}: PCA Components Shape: {}".format(layer_idx, pca_components_r_key.shape))
-    print ("{}: PCA Means Shape: {}".format(layer_idx, pca_means.shape))
-    print ("Compression Ratio: {}".format(top_correct_r / head_dim))
+    # print ("{}: PCA Components Shape: {}".format(layer_idx, pca_components_r_key.shape))
+    # print ("{}: PCA Means Shape: {}".format(layer_idx, pca_means.shape))
+    # print ("Compression Ratio: {}".format(top_correct_r / head_dim))
 
     if methods.LOGGER is not None:
         methods.LOGGER.log({"compression_ratio": top_correct_r / head_dim})
 
     if AXONN_AVAILABLE and ax.is_initialized:
-        print ("Dropping PCA Components and PCA Means")
+        # print ("Dropping PCA Components and PCA Means")
         ## only keep pca data for the heads on the GPU
         pca_components = drop(pca_components, transpose=True, skip_batch=True, dim=1)
         pca_means = drop(pca_means, transpose=True, skip_batch=True, dim=1)
@@ -79,7 +123,20 @@ def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, r
     return pca_means, pca_components, pca_components_r_key
 
 
-def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_states, key_states, pca_comps_full, pca_comps, top_r, top_k, l=-1):
+def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_states, key_states, pca_comps_full, pca_comps, top_r, top_k, l=-1, q_len=None, sequence_length=None):    
+    global collected_attention_data, collected_final_query_attention, collected_final_query
+    global n_samples
+    global sum_pre_softmax_diff_abs, sum_pre_softmax_diff_squared
+    global sum_post_softmax_diff_abs, sum_post_softmax_diff_squared
+    global mean_pre_softmax_full, mean_pre_softmax_approx, M2_pre_softmax_full
+    global M2_pre_softmax_approx, C_pre_softmax
+    global mean_post_softmax_full, mean_post_softmax_approx, M2_post_softmax_full
+    global M2_post_softmax_approx, C_post_softmax
+    global total_cross_entropy, total_cross_entropy_samples
+    global collected_query_percentile_data, collected_layer_percentile_data
+    global num_scores, kept_scores
+    global flag
+    
     head_dim = key_states.shape[-1]
     if top_r == -1:
         top_r = head_dim
@@ -100,63 +157,394 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     key_states_pca = torch.matmul(key_states, pca_comps_full).to(query_states.dtype)
     key_states_sparse = torch.matmul(key_states, pca_comps).to(query_states.dtype)
     query_states_sparse = torch.matmul(query_states, pca_comps).to(query_states.dtype)
+    
 
     #key_states_reconstructed = torch.matmul(key_states_sparse, pca_comps.transpose(-1, -2)).to(query_states.dtype)
     #query_states_reconstructed = torch.matmul(query_states_sparse, pca_comps.transpose(-1, -2)).to(query_states.dtype)
 
-    scaling_factor = head_dim * torch.sqrt((torch.square(key_states_sparse).sum(-1 , keepdim=True) / torch.square(key_states_pca).sum(-1, keepdim = True)))
-    scaling_factor = scaling_factor.transpose(-1, -2)
+    # scaling_factor = head_dim * torch.sqrt((torch.square(key_states_sparse).sum(-1 , keepdim=True) / torch.square(key_states_pca).sum(-1, keepdim = True)))
+    # scaling_factor = scaling_factor.transpose(-1, -2)
+    
+    # # SPARQ approach to temperature 
+    # epsilon = 1e-8
 
+    # sum_abs_query_sparse = torch.sum(torch.abs(query_states_sparse))
+    # sum_abs_query_full = torch.sum(torch.abs(query_states))
+
+    # softmaxTemp = head_dim * (sum_abs_query_sparse / (sum_abs_query_full + epsilon))
+    softmaxTemp = args.temp * top_r if args.temp != -1 else head_dim
+    
     # Compute attention with the query_states and key_states_sparse
-    attn_weights_s_hat = torch.matmul(query_states_sparse, key_states_sparse.transpose(-1, -2)) / math.sqrt(head_dim)
+    attn_weights_s_hat = torch.matmul(query_states_sparse, key_states_sparse.transpose(-1, -2)) / math.sqrt(softmaxTemp)
     if methods.LOGGER is not None:
         methods.LOGGER.update_config({"scaling_factor": "fixed"})
     if attention_mask is not None:  # no matter the length, we just slice it
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
         attn_weights_s_hat = attn_weights_s_hat + causal_mask
+        attn_weights = attn_weights + causal_mask
 
-    s_hat = torch.nn.functional.softmax(attn_weights_s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    s_hat = torch.nn.functional.softmax(attn_weights_s_hat, dim=-1, dtype=torch.float32).to(query_states.dtype) # Approx
+    s_full = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype) # Full    
+    
+    # ---- START OF DATA COLLECTION ----
+    
+    mask = causal_mask == 0
+    
+    # Flatten the masks & scores for aggregate analysis
+    mask_flat = mask.flatten()
+    attn_weights_s_hat_flat = attn_weights_s_hat.flatten()
+    attn_weights_full_flat = attn_weights.flatten()
+    s_hat_flat = s_hat.flatten()
+    s_full_flat = s_full.flatten()
+    
+    # Filter out masked positions
+    valid_indices = mask_flat.nonzero(as_tuple=False).squeeze()
+    total_valid_elements = valid_indices.shape[0]
+    
+    # Collect data on threshold percentiles
+    if flag:
+        _, layers, num_heads, seq_len = s_hat.shape
+        if total_valid_elements > 0:
+            for i in range(seq_len):
+                row_scores = s_hat[0, 0, i, : i + 1] # Mimics causality mask
+            
+                p25 = torch.quantile(row_scores.float(), 0.25).item()
+                p50 = torch.quantile(row_scores.float(), 0.50).item()
+                p75 = torch.quantile(row_scores.float(), 0.75).item()
+                
+                # Append to global percentile data
+                collected_query_percentile_data.append({
+                    'query_idx': i,
+                    'p25': p25,
+                    'p50': p50,
+                    'p75': p75
+                })
+            
+            for i in range(layers):
+                row_scores = s_hat[0, i, 4095, : ] # Take final query so no need for causality mask
+                
+                p25 = torch.quantile(row_scores.float(), 0.25).item()
+                p50 = torch.quantile(row_scores.float(), 0.50).item()
+                p75 = torch.quantile(row_scores.float(), 0.75).item()
+                
+                # Append to global percentile data
+                collected_layer_percentile_data.append({
+                    'layer_idx': i,
+                    'p25': p25,
+                    'p50': p50,
+                    'p75': p75
+                })
+                
+            flag = False
 
+
+    # Calculate aggregate statistics on the fly using Welfords Algorithm
+    if total_valid_elements > 0:
+        # Convert tensors to double precision for better accuracy
+        pre_softmax_full = attn_weights_full_flat[valid_indices].double()
+        pre_softmax_approx = attn_weights_s_hat_flat[valid_indices].double()
+        post_softmax_full = s_full_flat[valid_indices].double()
+        post_softmax_approx = s_hat_flat[valid_indices].double()
+
+        diff_pre_softmax = pre_softmax_approx - pre_softmax_full
+        diff_post_softmax = post_softmax_approx - post_softmax_full
+
+        sum_pre_softmax_diff_abs += torch.abs(diff_pre_softmax).sum().item()
+        sum_pre_softmax_diff_squared += (diff_pre_softmax ** 2).sum().item()
+
+        sum_post_softmax_diff_abs += torch.abs(diff_post_softmax).sum().item()
+        sum_post_softmax_diff_squared += (diff_post_softmax ** 2).sum().item()
+
+        batch_size = total_valid_elements
+
+        batch_mean_pre_softmax_full = pre_softmax_full.mean().item()
+        batch_mean_pre_softmax_approx = pre_softmax_approx.mean().item()
+
+        delta_pre_full = batch_mean_pre_softmax_full - mean_pre_softmax_full
+        delta_pre_approx = batch_mean_pre_softmax_approx - mean_pre_softmax_approx
+
+        n_samples += batch_size
+        mean_pre_softmax_full += delta_pre_full * batch_size / n_samples
+        mean_pre_softmax_approx += delta_pre_approx * batch_size / n_samples
+
+        M2_pre_softmax_full += ((pre_softmax_full - batch_mean_pre_softmax_full) ** 2).sum().item() + \
+        delta_pre_full ** 2 * (n_samples - batch_size) * batch_size / n_samples
+        
+        M2_pre_softmax_approx += ((pre_softmax_approx - batch_mean_pre_softmax_approx) ** 2).sum().item() + \
+        delta_pre_approx ** 2 * (n_samples - batch_size) * batch_size / n_samples
+
+        C_pre_softmax += \
+            ((pre_softmax_full - batch_mean_pre_softmax_full) * \
+            (pre_softmax_approx - batch_mean_pre_softmax_approx)).sum().item() + \
+            delta_pre_full * delta_pre_approx * (n_samples - batch_size) * batch_size / n_samples
+
+        batch_mean_post_softmax_full = post_softmax_full.mean().item()
+        batch_mean_post_softmax_approx = post_softmax_approx.mean().item()
+
+        delta_post_full = batch_mean_post_softmax_full - mean_post_softmax_full
+        delta_post_approx = batch_mean_post_softmax_approx - mean_post_softmax_approx
+
+        mean_post_softmax_full += delta_post_full * batch_size / n_samples
+        mean_post_softmax_approx += delta_post_approx * batch_size / n_samples
+
+        M2_post_softmax_full += ((post_softmax_full - batch_mean_post_softmax_full) ** 2).sum().item() + \
+            delta_post_full ** 2 * (n_samples - batch_size) * batch_size / n_samples
+        
+        M2_post_softmax_approx += ((post_softmax_approx - batch_mean_post_softmax_approx) ** 2).sum().item() + \
+            delta_post_approx ** 2 * (n_samples - batch_size) * batch_size / n_samples
+
+        C_post_softmax += \
+            ((post_softmax_full - batch_mean_post_softmax_full) * \
+            (post_softmax_approx - batch_mean_post_softmax_approx)).sum().item() + \
+            delta_post_full * delta_post_approx * (n_samples - batch_size) * batch_size / n_samples
+
+
+    # Calculate cross entropy of final query
+    if q_len == sequence_length:
+        epsilon = 1e-8  # To avoid log(0)
+        s_hat_last = s_hat[:, :, -1, :]  # Shape: [1, layer, key, query]
+        s_full_last = s_full[:, :, -1, :]  # Same shape
+
+        # Clip s_hat_last and s_full_last to prevent log(0)
+        s_hat_last_clipped = torch.clamp(s_hat_last, min=epsilon)
+        s_full_last_clipped = torch.clamp(s_full_last, min=epsilon)
+
+        # Element-wise cross-entropy
+        elementwise_cross_entropy = -s_full_last_clipped * torch.log(s_hat_last_clipped)
+
+        # Exclude NaNs and infs
+        valid_mask = torch.isfinite(elementwise_cross_entropy)
+
+        # Sum cross-entropy over valid positions
+        valid_cross_entropy = elementwise_cross_entropy[valid_mask]
+        valid_count = valid_cross_entropy.numel()
+
+        if valid_count > 0:
+            cross_entropy_sum = valid_cross_entropy.sum().item()
+            total_cross_entropy += cross_entropy_sum
+            total_cross_entropy_samples += valid_count
+            
+            
+    # Sample attention scores to plot (exported into json, too many total scores to export all)
+    if len(collected_attention_data) < MAX_SAMPLES and total_valid_elements > 0:
+        num_samples = min(SAMPLES_PER_CALL, MAX_SAMPLES - len(collected_attention_data), total_valid_elements)
+
+        # Randomly sample indices from valid positions
+        sampled_indices = valid_indices[torch.randint(0, total_valid_elements, (num_samples,))]
+
+        # Get the sampled attention scores
+        pre_softmax_approx = attn_weights_s_hat_flat[sampled_indices].cpu().tolist()
+        pre_softmax_full = attn_weights_full_flat[sampled_indices].cpu().tolist()
+        post_softmax_approx = s_hat_flat[sampled_indices].cpu().tolist()
+        post_softmax_full = s_full_flat[sampled_indices].cpu().tolist()
+
+        # Append to collected_attention_data
+        for i in range(num_samples):
+            collected_attention_data.append({
+                'layer_idx': layer_idx,
+                'pre_softmax_approx': pre_softmax_approx[i],
+                'pre_softmax_full': pre_softmax_full[i],
+                'post_softmax_approx': post_softmax_approx[i],
+                'post_softmax_full': post_softmax_full[i]
+            })
+
+        # Collect final query for plotting 
+        if not collected_final_query:
+            if layer_idx == COLLECT_LAYER:
+                s_hat_last = s_hat[0, COLLECT_HEAD, -1, :] 
+                s_full_last = s_full[0, COLLECT_HEAD, -1, :]
+                s_hat_last_np = s_hat_last.cpu().numpy()
+                s_full_last_np = s_full_last.cpu().numpy()
+                if hasattr(args, 'tokens'):
+                    tokens = args.tokens
+                else:
+                    tokens = None
+                collected_final_query_attention.append({
+                    'layer_idx': layer_idx,
+                    's_hat_last': s_hat_last_np.tolist(),
+                    's_full_last': s_full_last_np.tolist(),
+                    'tokens': tokens
+                })
+                collected_final_query = True
+    # ---- END OF DATA COLLECTION ----
+    # ## Get top-k keys based on the exact attention weights
+    # #i2_ground = torch.topk(attn_weights, top_k, dim=-1).indices
+
+    # #zeros = torch.zeros_like(attn_weights)
+
+    # #mask_predicted = zeros.scatter(-1, i2, 1)
+    # #mask_ground = zeros.scatter(-1, i2_ground, 1)
+
+    # #mask_predicted = torch.tril(mask_predicted)
+    # #mask_ground = torch.tril(mask_ground)
+
+    # #intersection = torch.logical_and(mask_predicted, mask_ground).sum(dim=-1)
+    # #union = torch.logical_or(mask_ground, mask_ground).sum(dim=-1)
+
+    # #jaccard_sim = intersection / union
+
+    # #jaccard_sim = jaccard_sim[:,:,top_k:].mean().item()
+
+    # #print (f"LayerId:{layer_idx}|Jaccard:{jaccard_sim}")
+    
+    
+    # THRESHOLDING
+    masked_attn = torch.full_like(attn_weights, float('-inf'))
+    
+    _, L, QX, QY = s_hat.shape
+    # Increment # scores for compression calculation
+    num_scores += 1 * L * QX * QY // 2 # Divide by 2 because of causality mask
+
+    # Generate threshold matrix (constant)
+    thresholds = 1.0 / torch.arange(
+        1, QX + 1, device=s_hat.device, dtype=s_hat.dtype
+    )  
+    thresholds = thresholds.view(1, 1, QX, 1) # Cast size
+
+    # Generate mask based on threshold
+    keep_mask = (s_hat >= thresholds) 
+
+    # Create and add identity matrix to mask
+    # keeps most recent key/value (also prevents situation where entire row is masked)
+    diag_mask = torch.eye(QX, device=s_hat.device, dtype=torch.bool)
+    diag_mask = diag_mask.view(1, 1, QX, QX) 
+    keep_mask = keep_mask | diag_mask
+
+    # Increment # kept scores for compression calculation
+    keep_count = keep_mask.sum().item()
+    kept_scores += keep_count
+
+    # Mask
+    masked_attn[keep_mask] = attn_weights[keep_mask]
+
+    # Calculate alpha
+    is_inf = (masked_attn == float('-inf'))
+    alpha_sums = s_hat.clone() 
+    alpha_sums[is_inf] = 0.0
+    alpha = alpha_sums.sum(dim=-1, keepdim=True)  
+
+    return masked_attn, alpha
+
+
+    # # TOP-K
     # Get the recency mask with 1s for the recent l tokens and 0 otherwise
     #ones = torch.ones_like(s_hat)
     #mask_recent = torch.triu(ones, diagonal=-int(l-1))
     #mask_recent = torch.tril(mask_recent, diagonal=0)
 
-    # Adding 1 to the recent token scores makes sure they are in the top-k
-    #s_hat_recent = s_hat + mask_recent
+    # # Adding 1 to the recent token scores makes sure they are in the top-k
+    # #s_hat_recent = s_hat + mask_recent
+    # if (top_k >= key_states.shape[-2]):
+    #     top_k = key_states.shape[-2]
 
-    if (top_k >= key_states.shape[-2]):
-        top_k = key_states.shape[-2]
+    # # Get top-k keys based on the s_hat_recent score matrix
+    # i2 = torch.topk(s_hat, top_k, dim=-1).indices
 
-    # Get top-k keys based on the s_hat_recent score matrix
-    i2 = torch.topk(attn_weights_s_hat, top_k, dim=-1).indices
+    # # Based on the top-k indices, change the original attn_weights to zero out the non-top-k indices
+    # mask = torch.full_like(attn_weights, fill_value=float('-inf'))
+    # mask.scatter_(-1, i2, attn_weights.gather(-1, i2))
 
-    ## Get top-k keys based on the exact attention weights
-    #i2_ground = torch.topk(attn_weights, top_k, dim=-1).indices
-
-    #zeros = torch.zeros_like(attn_weights)
-
-    #mask_predicted = zeros.scatter(-1, i2, 1)
-    #mask_ground = zeros.scatter(-1, i2_ground, 1)
-
-    #mask_predicted = torch.tril(mask_predicted)
-    #mask_ground = torch.tril(mask_ground)
-
-    #intersection = torch.logical_and(mask_predicted, mask_ground).sum(dim=-1)
-    #union = torch.logical_or(mask_ground, mask_ground).sum(dim=-1)
-
-    #jaccard_sim = intersection / union
-
-    #jaccard_sim = jaccard_sim[:,:,top_k:].mean().item()
-
-    #print (f"LayerId:{layer_idx}|Jaccard:{jaccard_sim}")
-
-    # Based on the top-k indices, change the original attn_weights to zero out the non-top-k indices
-    mask = torch.full_like(attn_weights, fill_value=float('-inf'))
-    mask.scatter_(-1, i2, attn_weights.gather(-1, i2))
-
-    # Caclulate alpha which is the sum of the probabilities of the top-k scores
-    alpha = torch.sum(torch.gather(s_hat, -1, i2), -1, True)
+    # # Caclulate alpha which is the sum of the probabilities of the top-k scores
+    # alpha = torch.sum(torch.gather(s_hat, -1, i2), -1, True)
+    
+    # return mask, alpha
 
 
-    return mask, alpha
+def compute_and_save_statistics(args, ppl):
+    global n_samples
+    global sum_pre_softmax_diff_abs, sum_pre_softmax_diff_squared
+    global sum_post_softmax_diff_abs, sum_post_softmax_diff_squared
+    global mean_pre_softmax_full, mean_pre_softmax_approx, M2_pre_softmax_full 
+    global M2_pre_softmax_approx, C_pre_softmax
+    global mean_post_softmax_full, mean_post_softmax_approx, M2_post_softmax_full
+    global M2_post_softmax_approx, C_post_softmax
+    global total_cross_entropy, total_cross_entropy_samples
+    global num_scores, kept_scores
+
+    filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.txt"
+    with open(filename, 'w') as f:
+        f.write('Statistics\n')
+        f.write('==========\n')
+        f.write(f'Total samples: {n_samples}\n\n')
+
+        # Pre-softmax statistics
+        mae_pre_softmax = sum_pre_softmax_diff_abs / n_samples
+        mse_pre_softmax = sum_pre_softmax_diff_squared / n_samples
+
+        variance_pre_softmax_full = M2_pre_softmax_full / (n_samples - 1) if n_samples > 1 else 0.0
+        variance_pre_softmax_approx = M2_pre_softmax_approx / (n_samples - 1) if n_samples > 1 else 0.0
+
+        covariance_pre_softmax = C_pre_softmax / (n_samples - 1) if n_samples > 1 else 0.0
+
+        std_pre_softmax_full = math.sqrt(variance_pre_softmax_full)
+        std_pre_softmax_approx = math.sqrt(variance_pre_softmax_approx)
+
+        if std_pre_softmax_full > 0 and std_pre_softmax_approx > 0:
+            r_pre_softmax = covariance_pre_softmax / (std_pre_softmax_full * std_pre_softmax_approx)
+        else:
+            r_pre_softmax = 0.0
+
+        # Write to file
+        f.write('Pre-softmax statistics:\n')
+        f.write(f'MAE: {mae_pre_softmax:.5f}\n')
+        f.write(f'MSE: {mse_pre_softmax:.5f}\n')
+        f.write(f'Variance (full): {variance_pre_softmax_full:.5f}\n')
+        f.write(f'Variance (approx): {variance_pre_softmax_approx:.5f}\n')
+        f.write(f'Correlation coefficient (r): {r_pre_softmax:.5f}\n\n')
+
+        # Post-softmax statistics
+        mae_post_softmax = sum_post_softmax_diff_abs / n_samples
+        mse_post_softmax = sum_post_softmax_diff_squared / n_samples
+
+        variance_post_softmax_full = M2_post_softmax_full / (n_samples - 1) if n_samples > 1 else 0.0
+        variance_post_softmax_approx = M2_post_softmax_approx / (n_samples - 1) if n_samples > 1 else 0.0
+
+        covariance_post_softmax = C_post_softmax / (n_samples - 1) if n_samples > 1 else 0.0
+
+        std_post_softmax_full = math.sqrt(variance_post_softmax_full)
+        std_post_softmax_approx = math.sqrt(variance_post_softmax_approx)
+
+        if std_post_softmax_full > 0 and std_post_softmax_approx > 0:
+            r_post_softmax = covariance_post_softmax / (std_post_softmax_full * std_post_softmax_approx)
+        else:
+            r_post_softmax = 0.0
+
+        # Write to file
+        f.write('Post-softmax statistics:\n')
+        f.write(f'MAE: {mae_post_softmax:.5f}\n')
+        f.write(f'MSE: {mse_post_softmax:.5f}\n')
+        f.write(f'Variance (full): {variance_post_softmax_full:.5f}\n')
+        f.write(f'Variance (approx): {variance_post_softmax_approx:.5f}\n')
+        f.write(f'Correlation coefficient (r): {r_post_softmax:.5f}\n\n')
+        
+        # Cross-entropy
+        average_cross_entropy = total_cross_entropy / total_cross_entropy_samples if total_cross_entropy_samples > 0 else 0.0
+        f.write(f'Average cross-entropy per final query: {average_cross_entropy:.5f}\n')
+        
+        f.write(f"Perplexity: {ppl.float():.5f}\n") 
+        f.write(f"Compression Ratio: {(kept_scores/num_scores):.3f}\n")
+
+
+def save_collected_attention_data(args):
+    global collected_attention_data, collected_query_percentile_data
+    global collected_layer_percentile_data, collected_final_query_attention
+    data_to_save = {
+        'rotary_type': args.rotary_type,
+        'top_r': args.top_r,
+        'top_k': args.top_k,
+        'temp': args.temp,
+        'layer': COLLECT_LAYER,
+        'head': COLLECT_HEAD,
+        'data': collected_attention_data,
+        'query_percentile_data': collected_query_percentile_data,
+        'layer_percentile_data': collected_layer_percentile_data,
+        'final_query_data': collected_final_query_attention
+    }
+    
+    # Construct filename with metadata
+    filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.json"
+    
+    # Dump as json
+    with open(filename, 'w') as f:
+        json.dump(data_to_save, f)
+    print(f"Attention data saved to {filename}")

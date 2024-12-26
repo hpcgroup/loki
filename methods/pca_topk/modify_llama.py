@@ -105,7 +105,7 @@ def get_pca_forward(args):
             topk = int(args.top_k * attn_weights.shape[-1])
         else:
             topk = int(args.top_k)
-        attn_weights, alpha = mask_attn_pca_topk(args, self.layer_idx, attn_weights, attention_mask, query_states, key_states, pca_components, pca_components_r_key, args.top_r, topk)
+        attn_weights, alpha = mask_attn_pca_topk(args, self.layer_idx, attn_weights, attention_mask, query_states, key_states, pca_components, pca_components_r_key, args.top_r, topk, q_len=q_len, sequence_length=args.sequence_length )
 
 
         assert alpha is not None, "alpha is None"
