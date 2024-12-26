@@ -3,7 +3,6 @@ conda activate loki
 module load pytorch/2.1.0-cu12
 module load cudatoolkit/12.2
 conda activate loki
-huggingface-cli login --token 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
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
