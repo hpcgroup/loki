@@ -1,9 +1,11 @@
 from networkx import intersection
 import torch
+import numpy as np
 import math
 import os
 import methods
 import math
+import random
 try:
     from axonn import axonn as ax
     from axonn.intra_layer import drop
@@ -48,11 +50,17 @@ total_cross_entropy_samples = 0
 # For percentile data
 collected_query_percentile_data = []
 collected_layer_percentile_data = []
+MAX_PERCENTILE_SAMPLES = 32
+percentile_samples_collected = 0
 
 # Keeping track of compression ratio
 # set to 1 to avoid div by 0 (given the # of scores starting at 1 should be negligible) 
 num_scores = kept_scores = 1
-flag = True # Used to denote when score has been collected
+weights_accumulator = [1]
+
+# Constants for thresholding  
+WARMUP_QUERIES = 16
+THRESHOLD_PERCENTILE = 0.5
 
 PCA_DATA_PATH = "/pscratch/sd/n/nkoley/BhateleLab/approximate-attention/transform"
 #PCA_DATA_PATH = "/global/cfs/cdirs/m4641/ApproxAttn/"
@@ -122,8 +130,9 @@ def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, r
 
     return pca_means, pca_components, pca_components_r_key
 
-
+count = 0
 def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_states, key_states, pca_comps_full, pca_comps, top_r, top_k, l=-1, q_len=None, sequence_length=None):    
+    global count
     global collected_attention_data, collected_final_query_attention, collected_final_query
     global n_samples
     global sum_pre_softmax_diff_abs, sum_pre_softmax_diff_squared
@@ -135,7 +144,8 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     global total_cross_entropy, total_cross_entropy_samples
     global collected_query_percentile_data, collected_layer_percentile_data
     global num_scores, kept_scores
-    global flag
+    global percentile_samples_collected, MAX_PERCENTILE_SAMPLES
+    global weights_accumulator
     
     head_dim = key_states.shape[-1]
     if top_r == -1:
@@ -201,42 +211,49 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     valid_indices = mask_flat.nonzero(as_tuple=False).squeeze()
     total_valid_elements = valid_indices.shape[0]
     
-    # Collect data on threshold percentiles
-    if flag:
-        _, layers, num_heads, seq_len = s_hat.shape
-        if total_valid_elements > 0:
-            for i in range(seq_len):
-                row_scores = s_hat[0, 0, i, : i + 1] # Mimics causality mask
-            
-                p25 = torch.quantile(row_scores.float(), 0.25).item()
-                p50 = torch.quantile(row_scores.float(), 0.50).item()
-                p75 = torch.quantile(row_scores.float(), 0.75).item()
-                
-                # Append to global percentile data
-                collected_query_percentile_data.append({
-                    'query_idx': i,
-                    'p25': p25,
-                    'p50': p50,
-                    'p75': p75
-                })
-            
-            for i in range(layers):
-                row_scores = s_hat[0, i, 4095, : ] # Take final query so no need for causality mask
-                
-                p25 = torch.quantile(row_scores.float(), 0.25).item()
-                p50 = torch.quantile(row_scores.float(), 0.50).item()
-                p75 = torch.quantile(row_scores.float(), 0.75).item()
-                
-                # Append to global percentile data
-                collected_layer_percentile_data.append({
-                    'layer_idx': i,
-                    'p25': p25,
-                    'p50': p50,
-                    'p75': p75
-                })
-                
-            flag = False
-
+    # p = MAX_SAMPLES / total_batches ~ 64 / 2600 ~ 0.025
+    # p = 0.025
+    
+    # if percentile_samples_collected < MAX_PERCENTILE_SAMPLES and random.random() < p:
+    #     percentile_samples_collected += 1
+    #     # Collect data on threshold percentiles
+    #     _, layers, seq_len_X, seq_len_Y = s_hat.shape
+        
+    #     if total_valid_elements > 0:
+    #         # Collect query percentile data across all layers
+    #         for layer_idx in range(0,layers,(layers//4)):
+    #             for query_idx in range(seq_len_Y):
+    #                 # Extract row scores up to the current query index to mimic causality
+    #                 row_scores = s_hat[0, layer_idx, query_idx, :query_idx + 1]
+                    
+    #                 # Calculate the 25th, 50th (median), and 75th percentiles
+    #                 p25 = torch.quantile(row_scores.float(), 0.25).item()
+    #                 p50 = torch.quantile(row_scores.float(), 0.50).item()
+    #                 p75 = torch.quantile(row_scores.float(), 0.75).item()
+                    
+    #                 collected_query_percentile_data.append({
+    #                     'layer_idx': layer_idx,
+    #                     'query_idx': query_idx,
+    #                     'p25': p25,
+    #                     'p50': p50,
+    #                     'p75': p75
+    #                 })
+                    
+    #         if seq_len_X >= 4095:
+    #             for i in range(layers):
+    #                 row_scores = s_hat[0, i, 4095, : ] # Take final query so no need for causality mask
+                    
+    #                 p25 = torch.quantile(row_scores.float(), 0.25).item()
+    #                 p50 = torch.quantile(row_scores.float(), 0.50).item()
+    #                 p75 = torch.quantile(row_scores.float(), 0.75).item()
+                    
+    #                 collected_layer_percentile_data.append({
+    #                     'layer_idx': i,
+    #                     'p25': p25,
+    #                     'p50': p50,
+    #                     'p75': p75
+    #                 })
+                        
 
     # Calculate aggregate statistics on the fly using Welfords Algorithm
     if total_valid_elements > 0:
@@ -389,14 +406,27 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     
     
     # THRESHOLDING
+    global WARMUP_QUERIES
+    global THRESHOLD_PERCENTILE
+    weight_vals = []
+    
     masked_attn = torch.full_like(attn_weights, float('-inf'))
     
-    _, L, QX, QY = s_hat.shape
+    H, L, QX, QY = s_hat.shape
     # Increment # scores for compression calculation
-    num_scores += 1 * L * QX * QY // 2 # Divide by 2 because of causality mask
+    num_scores += H * L * QX * QY // 2 # Divide by 2 because of causality mask
 
+    for i in range(WARMUP_QUERIES):
+        row_scores = s_hat[0, 0, i, : i+1]
+        quantile_value = torch.quantile(row_scores.float(), THRESHOLD_PERCENTILE).item()
+        weight_i = quantile_value * (i+1)
+        weight_vals.append(weight_i)
+    
+    weight = sum(weight_vals) / len(weight_vals) if weight_vals else 1.0
+    weights_accumulator.append(weight)
+    
     # Generate threshold matrix (constant)
-    thresholds = 1.0 / torch.arange(
+    thresholds = weight / torch.arange(
         1, QX + 1, device=s_hat.device, dtype=s_hat.dtype
     )  
     thresholds = thresholds.view(1, 1, QX, 1) # Cast size
@@ -426,11 +456,11 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     return masked_attn, alpha
 
 
-    # # TOP-K
-    # Get the recency mask with 1s for the recent l tokens and 0 otherwise
-    #ones = torch.ones_like(s_hat)
-    #mask_recent = torch.triu(ones, diagonal=-int(l-1))
-    #mask_recent = torch.tril(mask_recent, diagonal=0)
+    # TOP-K
+    # # Get the recency mask with 1s for the recent l tokens and 0 otherwise
+    # ones = torch.ones_like(s_hat)
+    # mask_recent = torch.triu(ones, diagonal=-int(l-1))
+    # mask_recent = torch.tril(mask_recent, diagonal=0)
 
     # # Adding 1 to the recent token scores makes sure they are in the top-k
     # #s_hat_recent = s_hat + mask_recent
@@ -460,6 +490,8 @@ def compute_and_save_statistics(args, ppl):
     global M2_post_softmax_approx, C_post_softmax
     global total_cross_entropy, total_cross_entropy_samples
     global num_scores, kept_scores
+    global weights_accumulator
+    global THRESHOLD_PERCENTILE
 
     filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.txt"
     with open(filename, 'w') as f:
@@ -519,10 +551,14 @@ def compute_and_save_statistics(args, ppl):
         
         # Cross-entropy
         average_cross_entropy = total_cross_entropy / total_cross_entropy_samples if total_cross_entropy_samples > 0 else 0.0
-        f.write(f'Average cross-entropy per final query: {average_cross_entropy:.5f}\n')
+        f.write(f'Average cross-entropy per final query: {average_cross_entropy:.5f}\n\n')
         
+        weights_accumulator = np.array(weights_accumulator)
         f.write(f"Perplexity: {ppl.float():.5f}\n") 
         f.write(f"Compression Ratio: {(kept_scores/num_scores):.3f}\n")
+        f.write(f"Average weight: {weights_accumulator.mean()}\n")
+        f.write(f"Stdv weight: {weights_accumulator.std()}\n")
+        
 
 
 def save_collected_attention_data(args):
@@ -542,7 +578,9 @@ def save_collected_attention_data(args):
     }
     
     # Construct filename with metadata
-    filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.json"
+    # filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.json"
+    filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_THRESH{THRESHOLD_PERCENTILE}.json"
+    
     
     # Dump as json
     with open(filename, 'w') as f:
