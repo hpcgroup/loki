@@ -49,8 +49,7 @@ total_cross_entropy = 0.0
 total_cross_entropy_samples = 0
 
 # For percentile data
-collected_query_percentile_data = []
-collected_layer_percentile_data = []
+collected_percentile_data = []
 MAX_PERCENTILE_SAMPLES = 8
 percentile_samples_collected = 0
 batch_num = 0
@@ -65,8 +64,6 @@ b_accumulator = [1]
 
 # Constants for thresholding  
 WARMUP_QUERIES = 16
-THRESHOLD_PERCENTILE = 0.5
-
 PCA_DATA_PATH = "/pscratch/sd/n/nkoley/BhateleLab/approximate-attention/transform"
 #PCA_DATA_PATH = "/global/cfs/cdirs/m4641/ApproxAttn/"
 
@@ -150,7 +147,7 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     global mean_post_softmax_full, mean_post_softmax_approx, M2_post_softmax_full
     global M2_post_softmax_approx, C_post_softmax
     global total_cross_entropy, total_cross_entropy_samples
-    global collected_query_percentile_data, collected_layer_percentile_data
+    global collected_percentile_data, collected_layer_percentile_data
     global num_scores, kept_scores
     global percentile_samples_collected, MAX_PERCENTILE_SAMPLES
     global weights_accumulator
@@ -250,7 +247,7 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
             p50 = torch.quantile(row_scores.float(), 0.50).item()
             p75 = torch.quantile(row_scores.float(), 0.75).item()
             
-            collected_query_percentile_data.append({
+            collected_percentile_data.append({
                 'layer_idx': layer_idx,
                 'head_idx': head_idx,
                 'query_idx': 4095,
@@ -274,7 +271,7 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
                     p50 = torch.quantile(row_scores.float(), 0.50).item()
                     p75 = torch.quantile(row_scores.float(), 0.75).item()
                     
-                    collected_query_percentile_data.append({
+                    collected_percentile_data.append({
                         'layer_idx': layer_idx,
                         'head_idx': head_idx,
                         'query_idx': query_idx,
@@ -296,7 +293,7 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
                 p50 = torch.quantile(row_scores.float(), 0.50).item()
                 p75 = torch.quantile(row_scores.float(), 0.75).item()
                 
-                collected_query_percentile_data.append({
+                collected_percentile_data.append({
                     'layer_idx': layer_idx,
                     'head_idx': head_idx,
                     'query_idx': 4095,
@@ -459,7 +456,6 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     
     # THRESHOLDING
     global WARMUP_QUERIES
-    global THRESHOLD_PERCENTILE
     global a_accumulator, b_accumulator
     
     masked_attn = torch.full_like(attn_weights, float('-inf'))
@@ -473,7 +469,7 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
 
     for i in range(WARMUP_QUERIES):
         row_scores = s_hat[0, 0, i, : i+1]
-        quantile_value = torch.quantile(row_scores.float(), THRESHOLD_PERCENTILE).item()
+        quantile_value = torch.quantile(row_scores.float(), args.threshold_percentile).item()
         x_vals.append(i+1)
         y_vals.append(quantile_value)
     #     x_vals.append(math.log(i+1))
@@ -565,7 +561,7 @@ def compute_and_save_statistics(args, ppl):
     global THRESHOLD_PERCENTILE
 
     # filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.txt"
-    filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_THRESH{THRESHOLD_PERCENTILE}.txt"
+    filename = f"DATA_{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_thresh{args.threshold_percentile}.txt"
     
     with open(filename, 'w') as f:
         f.write('Statistics\n')
@@ -638,8 +634,8 @@ def compute_and_save_statistics(args, ppl):
 
 
 def save_collected_attention_data(args):
-    global collected_attention_data, collected_query_percentile_data
-    global collected_layer_percentile_data, collected_final_query_attention
+    global collected_attention_data, collected_percentile_data
+    global collected_final_query_attention
     data_to_save = {
         'rotary_type': args.rotary_type,
         'top_r': args.top_r,
@@ -648,14 +644,13 @@ def save_collected_attention_data(args):
         'layer': COLLECT_LAYER,
         'head': COLLECT_HEAD,
         'data': collected_attention_data,
-        'query_percentile_data': collected_query_percentile_data,
-        'layer_percentile_data': collected_layer_percentile_data,
+        'percentile_data': collected_percentile_data,
         'final_query_data': collected_final_query_attention
     }
     
     # Construct filename with metadata
     # filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.json"
-    filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_THRESH{THRESHOLD_PERCENTILE}.json"
+    filename = f"DATA_{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_thresh{args.threshold_percentile}.json"
     
     
     # Dump as json

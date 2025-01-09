@@ -13,6 +13,7 @@ def get_topk_args(parser):
 def get_pca_args(parser):
     parser.add_argument("--top-r", type=float, default=-1, help="top r channels to consider," "set to -1 to use all channels")
     parser.add_argument("--temp", type=float, default=-1)
+    parser.add_argument("--threshold-percentile", type=float, default=0.5)
     parser.add_argument("--use-pca-topk", action='store_true', default=False, help="use the PCA TopK algos")
     parser.add_argument("--rotary-type", type=str, default="postrotary", help="rotary type")
     parser.add_argument("--recent-ratio", type=float, default=-1, help="PcaTopK recent ratio," "set to -1 by default")
