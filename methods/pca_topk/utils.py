@@ -6,6 +6,7 @@ import os
 import methods
 import math
 import random
+from scipy.optimize import curve_fit
 try:
     from axonn import axonn as ax
     from axonn.intra_layer import drop
@@ -50,13 +51,17 @@ total_cross_entropy_samples = 0
 # For percentile data
 collected_query_percentile_data = []
 collected_layer_percentile_data = []
-MAX_PERCENTILE_SAMPLES = 32
+MAX_PERCENTILE_SAMPLES = 8
 percentile_samples_collected = 0
+batch_num = 0
+visited_percentiles = set()
+collect_flag = False
 
 # Keeping track of compression ratio
 # set to 1 to avoid div by 0 (given the # of scores starting at 1 should be negligible) 
 num_scores = kept_scores = 1
-weights_accumulator = [1]
+a_accumulator = [1]
+b_accumulator = [1]
 
 # Constants for thresholding  
 WARMUP_QUERIES = 16
@@ -129,6 +134,9 @@ def get_pca_components(args, layer_idx, head_dim, top_r, num_key_value_groups, r
         pca_components_r_key = drop(pca_components_r_key, transpose=True, skip_batch=True, dim=1)
 
     return pca_means, pca_components, pca_components_r_key
+
+def threshold_func(x, a, b):
+    return a / np.power(x+1, b)
 
 count = 0
 def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_states, key_states, pca_comps_full, pca_comps, top_r, top_k, l=-1, q_len=None, sequence_length=None):    
@@ -210,49 +218,93 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     # Filter out masked positions
     valid_indices = mask_flat.nonzero(as_tuple=False).squeeze()
     total_valid_elements = valid_indices.shape[0]
+
+    global batch_num
+    global collect_flag
+    global visited_percentiles
     
-    # p = MAX_SAMPLES / total_batches ~ 64 / 2600 ~ 0.025
-    # p = 0.025
-    
-    # if percentile_samples_collected < MAX_PERCENTILE_SAMPLES and random.random() < p:
-    #     percentile_samples_collected += 1
-    #     # Collect data on threshold percentiles
-    #     _, layers, seq_len_X, seq_len_Y = s_hat.shape
+    if layer_idx == 0:
         
-    #     if total_valid_elements > 0:
-    #         # Collect query percentile data across all layers
-    #         for layer_idx in range(0,layers,(layers//4)):
-    #             for query_idx in range(seq_len_Y):
-    #                 # Extract row scores up to the current query index to mimic causality
-    #                 row_scores = s_hat[0, layer_idx, query_idx, :query_idx + 1]
+        batch_num += 1
+        p = 0.15 # ~MAX_PERCENTILE_SAMPLES / Batch len
+        
+        if percentile_samples_collected < MAX_PERCENTILE_SAMPLES and random.random() < p:
+            collect_flag = True
+    
+    elif layer_idx == 31:
+        collect_flag = False
+        
+    if collect_flag:
+        _, heads, seq_len_X, seq_len_Y = s_hat.shape
+        
+        # Collect all layers @ head 0,8,16,24,31, query 4096
+        for head_idx in [0,8,16,24,31]:
+            if (batch_num, layer_idx, head_idx, 4095) in visited_percentiles:
+                continue
+            
+            # Extract row scores up to the current query index to mimic causality
+            row_scores = s_hat[0, head_idx, 4095, :]
+            
+            # Calculate the 25th, 50th (median), and 75th percentiles
+            p25 = torch.quantile(row_scores.float(), 0.25).item()
+            p50 = torch.quantile(row_scores.float(), 0.50).item()
+            p75 = torch.quantile(row_scores.float(), 0.75).item()
+            
+            collected_query_percentile_data.append({
+                'layer_idx': layer_idx,
+                'head_idx': head_idx,
+                'query_idx': 4095,
+                'p25': p25,
+                'p50': p50,
+                'p75': p75
+            })
+            visited_percentiles.add((batch_num, layer_idx, head_idx, 4095))
+    
+        if layer_idx in [0,8,16,24,31]:
+            # Collect entire query-key matrix @ head 0,8,16,24,31, layer 0,8,16,24,31
+            for head_idx in [0,8,16,24,31]: 
+                for query_idx in range(seq_len_Y):
+                    if (batch_num, layer_idx, head_idx, query_idx) in visited_percentiles:
+                        continue
+                    # Extract row scores up to the current query index to mimic causality
+                    row_scores = s_hat[0, head_idx, query_idx, :query_idx + 1]
                     
-    #                 # Calculate the 25th, 50th (median), and 75th percentiles
-    #                 p25 = torch.quantile(row_scores.float(), 0.25).item()
-    #                 p50 = torch.quantile(row_scores.float(), 0.50).item()
-    #                 p75 = torch.quantile(row_scores.float(), 0.75).item()
+                    # Calculate the 25th, 50th (median), and 75th percentiles
+                    p25 = torch.quantile(row_scores.float(), 0.25).item()
+                    p50 = torch.quantile(row_scores.float(), 0.50).item()
+                    p75 = torch.quantile(row_scores.float(), 0.75).item()
                     
-    #                 collected_query_percentile_data.append({
-    #                     'layer_idx': layer_idx,
-    #                     'query_idx': query_idx,
-    #                     'p25': p25,
-    #                     'p50': p50,
-    #                     'p75': p75
-    #                 })
+                    collected_query_percentile_data.append({
+                        'layer_idx': layer_idx,
+                        'head_idx': head_idx,
+                        'query_idx': query_idx,
+                        'p25': p25,
+                        'p50': p50,
+                        'p75': p75
+                    })
+                    visited_percentiles.add((batch_num, layer_idx, head_idx, query_idx))
                     
-    #         if seq_len_X >= 4095:
-    #             for i in range(layers):
-    #                 row_scores = s_hat[0, i, 4095, : ] # Take final query so no need for causality mask
-                    
-    #                 p25 = torch.quantile(row_scores.float(), 0.25).item()
-    #                 p50 = torch.quantile(row_scores.float(), 0.50).item()
-    #                 p75 = torch.quantile(row_scores.float(), 0.75).item()
-                    
-    #                 collected_layer_percentile_data.append({
-    #                     'layer_idx': i,
-    #                     'p25': p25,
-    #                     'p50': p50,
-    #                     'p75': p75
-    #                 })
+            # Collect all heads @ query 4096, layer 0,8,16,24,31 
+            for head_idx in range(heads):
+                if (batch_num, layer_idx, head_idx, 4095) in visited_percentiles:
+                    continue
+                # Extract row scores up to the current query index to mimic causality
+                row_scores = s_hat[0, head_idx, 4095, :]
+                
+                # Calculate the 25th, 50th (median), and 75th percentiles
+                p25 = torch.quantile(row_scores.float(), 0.25).item()
+                p50 = torch.quantile(row_scores.float(), 0.50).item()
+                p75 = torch.quantile(row_scores.float(), 0.75).item()
+                
+                collected_query_percentile_data.append({
+                    'layer_idx': layer_idx,
+                    'head_idx': head_idx,
+                    'query_idx': 4095,
+                    'p25': p25,
+                    'p50': p50,
+                    'p75': p75
+                })
+                visited_percentiles.add((batch_num, layer_idx, head_idx, 4095))
                         
 
     # Calculate aggregate statistics on the fly using Welfords Algorithm
@@ -408,27 +460,46 @@ def mask_attn_pca_topk(args, layer_idx, attn_weights, attention_mask, query_stat
     # THRESHOLDING
     global WARMUP_QUERIES
     global THRESHOLD_PERCENTILE
-    weight_vals = []
+    global a_accumulator, b_accumulator
     
     masked_attn = torch.full_like(attn_weights, float('-inf'))
     
-    H, L, QX, QY = s_hat.shape
+    B, H, QX, QY = s_hat.shape
     # Increment # scores for compression calculation
-    num_scores += H * L * QX * QY // 2 # Divide by 2 because of causality mask
+    num_scores += B * H * QX * QY // 2 # Divide by 2 because of causality mask
+    
+    x_vals = []
+    y_vals = []
 
     for i in range(WARMUP_QUERIES):
         row_scores = s_hat[0, 0, i, : i+1]
         quantile_value = torch.quantile(row_scores.float(), THRESHOLD_PERCENTILE).item()
-        weight_i = quantile_value * (i+1)
-        weight_vals.append(weight_i)
+        x_vals.append(i+1)
+        y_vals.append(quantile_value)
+    #     x_vals.append(math.log(i+1))
+    #     y_vals.append(math.log(quantile_value))
     
-    weight = sum(weight_vals) / len(weight_vals) if weight_vals else 1.0
-    weights_accumulator.append(weight)
+    # if len(x_vals) >= 2:
+    #     slope, intercept = np.polyfit(x_vals, y_vals, 1)
+        
+    #     a = math.exp(intercept)
+    #     b = -slope
+    # else:
+    #     a = b = 1.0
+    
+    if len(x_vals) >= 2:
+        x_vals = np.array(x_vals)
+        y_vals = np.array(y_vals)
+        
+        popt, pcov = curve_fit(threshold_func, x_vals, y_vals, p0=[1.0,1.0])
+        a, b = popt[0], popt[1] 
+    
+    a_accumulator.append(a)
+    b_accumulator.append(b)
     
     # Generate threshold matrix (constant)
-    thresholds = weight / torch.arange(
-        1, QX + 1, device=s_hat.device, dtype=s_hat.dtype
-    )  
+    thresholds = torch.arange(1, QX + 1, device=s_hat.device, dtype=s_hat.dtype)  
+    thresholds = a / (thresholds ** b)
     thresholds = thresholds.view(1, 1, QX, 1) # Cast size
 
     # Generate mask based on threshold
@@ -490,10 +561,12 @@ def compute_and_save_statistics(args, ppl):
     global M2_post_softmax_approx, C_post_softmax
     global total_cross_entropy, total_cross_entropy_samples
     global num_scores, kept_scores
-    global weights_accumulator
+    global a_accumulator, b_accumulator
     global THRESHOLD_PERCENTILE
 
-    filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.txt"
+    # filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_layer{COLLECT_LAYER}_head{COLLECT_HEAD}.txt"
+    filename = f"{args.model_id.split('/')[-1]}_{args.rotary_type}_topr{args.top_r}_temp{args.temp}_THRESH{THRESHOLD_PERCENTILE}.txt"
+    
     with open(filename, 'w') as f:
         f.write('Statistics\n')
         f.write('==========\n')
@@ -553,11 +626,14 @@ def compute_and_save_statistics(args, ppl):
         average_cross_entropy = total_cross_entropy / total_cross_entropy_samples if total_cross_entropy_samples > 0 else 0.0
         f.write(f'Average cross-entropy per final query: {average_cross_entropy:.5f}\n\n')
         
-        weights_accumulator = np.array(weights_accumulator)
+        a_accumulator = np.array(a_accumulator)
+        b_accumulator = np.array(b_accumulator)
         f.write(f"Perplexity: {ppl.float():.5f}\n") 
         f.write(f"Compression Ratio: {(kept_scores/num_scores):.3f}\n")
-        f.write(f"Average weight: {weights_accumulator.mean()}\n")
-        f.write(f"Stdv weight: {weights_accumulator.std()}\n")
+        f.write(f"Average a weight: {a_accumulator.mean()}\n")
+        f.write(f"Stdv a weight: {a_accumulator.std()}\n")
+        f.write(f"Average b weight: {b_accumulator.mean()}\n")
+        f.write(f"Stdv b weight: {b_accumulator.std()}\n")
         
 
 
