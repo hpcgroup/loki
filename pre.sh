@@ -1,10 +1,6 @@
-module load conda
-conda activate loki
-module load pytorch/2.1.0-cu12
-module load cudatoolkit/12.2
-conda activate loki
-
-export CUDA_DEVICE_MAX_CONNECTIONS=1
+module unload python
+source ../loki-venv-2/bin/activate
+#huggingface-cli login
 
 NNODES=$SLURM_JOB_NUM_NODES
 GPUS=$(( NNODES * 4 ))
@@ -13,7 +9,7 @@ export MASTER_PORT=29500
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NCCL_NET_GDR_LEVEL=PHB
 export CUDA_DEVICE_MAX_CONNECTIONS=1
-export CUDA_VISIBLE_DEVICES=3,2,1,0
+#export CUDA_VISIBLE_DEVICES=3,2,1,0
 export NCCL_CROSS_NIC=1
 export NCCL_SOCKET_IFNAME=hsn
 export NCCL_NET="AWS Libfabric"
