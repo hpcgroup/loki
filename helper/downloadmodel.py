@@ -1,10 +1,11 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import sys
+from datasets import load_dataset
 
-model_id = sys.argv[1]
+#model_id = sys.argv[1]
 
-model = AutoModelForCausalLM.from_pretrained(model_id)
-tokenizer = AutoTokenizer.from_pretrained(model_id)
+#model = AutoModelForCausalLM.from_pretrained(model_id)
+#tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 # Enable this to cache the dataset
-#test = load_dataset("wikitext", "wikitext-2-raw-v1", split="test", num_proc=1)
+test = load_dataset("wikitext", "wikitext-2-raw-v1", split="test", num_proc=1)

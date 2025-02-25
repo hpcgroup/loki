@@ -1,5 +1,5 @@
 from .common.saver import TensorSaver as TensorSaver
-from .common.logger import WandbLogger as WandbLogger
+#from .common.logger import WandbLogger as WandbLogger
 from .common.logger import NoOpLogger as NoOpLogger
 
 G_TENSOR_SAVER = None

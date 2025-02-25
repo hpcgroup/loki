@@ -23,19 +23,23 @@ def get_top_k_forward(args):
     def modified_forward(
         self,
         hidden_states: torch.Tensor,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
+        cache_position: Optional[torch.LongTensor] = None,
         output_attentions: bool = False,
-        use_cache: bool = False,
-        cache_position = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if "padding_mask" in kwargs:
             warnings.warn(
                 "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
             )
-
+        if not hasattr(self, "num_heads"):
+            self.num_heads = self.config.num_attention_heads
+        if not hasattr(self, "num_key_value_heads"):
+            self.num_key_value_heads = self.config.num_key_value_heads
+        if not hasattr(self, "hidden_size"):
+            self.hidden_size = self.config.hidden_size
         bsz, q_len, _ = hidden_states.size()
 
         if self.config.pretraining_tp > 1:
@@ -63,7 +67,18 @@ def get_top_k_forward(args):
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-
+        
+        query_states = torch.nan_to_num(query_states, nan=0.0)
+        key_states = torch.nan_to_num(key_states, nan=0.0)
+        value_states = torch.nan_to_num(value_states, nan=0.0)
+        
+        if torch.isnan(query_states).any():
+            print("[DEBUG] NaNs detected in query_states after q_proj")
+        if torch.isnan(key_states).any():
+            print("[DEBUG] NaNs detected in key_states after k_proj")
+        if torch.isnan(value_states).any():
+            print("[DEBUG] NaNs detected in value_states after v_proj")
+        
         if methods.G_TENSOR_SAVER is not None:
             if AXONN_AVAILABLE and ax.is_initialized:
                 key_tensor_to_save = gather(key_states, transpose=True, dim=1, skip_batch=True)
@@ -77,13 +92,15 @@ def get_top_k_forward(args):
             else:
                 methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
                 methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
+                methods.G_TENSOR_SAVER.save("key", key_states, self.layer_idx, "prerotary")
+                methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
                 methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
 
             #methods.G_TENSOR_SAVER.save("query", query_states, self.layer_idx, "prerotary")
             #methods.G_TENSOR_SAVER.save("value", value_states, self.layer_idx, "prerotary")
 
         past_key_value = getattr(self, "past_key_value", past_key_value)
-        cos, sin = self.rotary_emb(value_states, position_ids)
+        cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
@@ -107,9 +124,12 @@ def get_top_k_forward(args):
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
-
+        
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
-
+        
+        if torch.isnan(attn_weights).any():
+            print("[DEBUG] NaNs detected in attn_weights BEFORE top-k masking")
+         
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
             attn_weights = attn_weights + causal_mask
@@ -120,12 +140,17 @@ def get_top_k_forward(args):
         else:
             topk = int(args.top_k)
         attn_weights = mask_attn_top_k(attn_weights, topk, dim=-1)
-
+        
+        if torch.isnan(attn_weights).any():
+            print("[DEBUG] NaNs detected in attn_weights AFTER top-k masking")
+        
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
-
+       
+        if torch.isnan(attn_output).any():
+            print("[DEBUG] NaNs detected in attn_output AFTER softmax")
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
@@ -147,7 +172,7 @@ def get_top_k_forward(args):
         if not output_attentions:
             attn_weights = None
 
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights
     return modified_forward
 
 def make_llama_attention_top_k(args):

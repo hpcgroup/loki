@@ -1,4 +1,3 @@
-torch==2.1.0
 accelerate==0.30.0
 datasets==2.17.1
 transformers==4.40.2
