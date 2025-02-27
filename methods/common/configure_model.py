@@ -25,6 +25,11 @@ def get_save_tensor_args(parser):
     parser.add_argument("--tensors-dir", type=str, default="./", help="file to save tensor to")
     return parser
 
+def get_thresh_args(parser):
+    parser.add_argument("--use-thresh", action='store_true', default=False, help="use the Thresh algos")
+    # Template
+    return parser
+
 
 def get_modifier(args):
     if args.use_topk:
@@ -36,6 +41,9 @@ def get_modifier(args):
     elif args.use_pca_topk:
         method_name = "pca_topk"
         module_name = ".pca_topk.modify_" + args.model_type
+    elif args.use_thresh:
+        method_name = "thresh"
+        module_name = ".thresh.modify_" + args.model_type
     else:
         return None
       
@@ -65,6 +73,9 @@ def get_config_dict(args):
         config_dict["rotary_type"] = args.rotary_type
         config_dict["recent_ratio"] = args.recent_ratio
         config_dict["transform_dataset"] = args.transform_dataset
+    elif args.use_thresh:
+        config_dict["method"] = "thresh"
+        # Template
     else:
         config_dict["method"] = "base_hf"
     return config_dict

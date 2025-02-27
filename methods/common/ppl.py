@@ -64,7 +64,7 @@ def get_model(
             if rank == 0:
                 print("Parallelized with the slower auto parallelize API.")
     else:
-        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype, force_download=True, trust_remote_code=True).to(device)
+        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype, trust_remote_code=True).to(device)
 
     return model
 
@@ -113,7 +113,7 @@ def evaluate_ppl(model_id="facebook/opt-350m",
         target_ids[:, :-trg_len] = -100
 
         with torch.no_grad():
-            with torch.cuda.amp.autocast(dtype=dtype):
+            with torch.amp.autocast('cuda', dtype=dtype):
                 if past_key_values is not None:
                     outputs = model(input_ids.cuda(), past_key_values=copy.deepcopy(past_key_values), labels=target_ids.cuda())
                 else:
@@ -128,7 +128,7 @@ def evaluate_ppl(model_id="facebook/opt-350m",
         prev_end_loc = end_loc
         if end_loc == seq_len:
             break
-
+    print(nlls)
     ppl = torch.exp(torch.stack(nlls).mean())
     return ppl
 
