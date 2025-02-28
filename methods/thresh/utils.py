@@ -8,6 +8,7 @@ import os
 import methods
 import math
 import random
+import json
 from scipy.optimize import curve_fit
 try:
     from axonn import axonn as ax
@@ -15,6 +16,13 @@ try:
     AXONN_AVAILABLE=True
 except ImportError:
     AXONN_AVAILABLE=False
+
+# Experiment collectors
+percentile_data = []
+percentile_sampling_rate = 0.001
+
+query_data = []
+query_sampling_rate = 0.003
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -37,6 +45,7 @@ def thresh_attention_forward(
     attention_mask: Optional[torch.Tensor],
     scaling: float,
     dropout: float = 0.0,
+    layer_idx: int = None,
     **kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
@@ -49,8 +58,60 @@ def thresh_attention_forward(
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+    
+    # Shape [batch, num_heads, query_length, key_length]
+    B, H, Q, K = attn_weights.shape
+    
+    # Collect percentile data 
+    for head_idx in range(H):
+        # Random sample
+        if random.random() < percentile_sampling_rate:
+    #        print("percentile sampled")
+            for query_idx in range(Q):
+                    # Because of causality, valid keys for query index i are first (i+1) elements
+                    row = attn_weights[0, head_idx, query_idx, :query_idx+1]
+                    p25 = torch.quantile(row.float(), 0.25).item()
+                    p50 = torch.quantile(row.float(), 0.50).item()
+                    p75 = torch.quantile(row.float(), 0.75).item()
+                    percentile_data.append({
+                        'layer_idx': layer_idx,
+                        'head_idx': head_idx,
+                        'query_idx': query_idx,
+                        'p25': p25,
+                        'p50': p50,
+                        'p75': p75,
+                    })
+
+        if random.random() < query_sampling_rate: 
+     #       print("query sampled")
+            #Collect per query data
+            sample_query_idx = random.randint(0,Q-1)
+            full_row = attn_weights[0, head_idx, sample_query_idx, :sample_query_idx+1].detach().cpu().tolist()
+            query_data.append({
+                'layer_idx': getattr(module, 'layer_idx', -1),
+                'head_idx': head_idx,
+                'query_idx': sample_query_idx,
+                'row_length': sample_query_idx+1,
+                'attention_row': full_row,
+            })
+        
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
 
+def save_experiment_data(args):
+    global percentile_data, query_data
+
+    exp_data = {
+        'percentile_data': percentile_data,
+        'query_data': query_data,
+        'model_id': args.model_id,
+    }
+    
+    filename = f"thresh_{args.model_id.split('/')[-1]}_exp.json"
+    
+    with open(filename, 'w') as f:
+        json.dump(exp_data, f, indent=2)
+    
+    print(f"Experiment data saved to {filename}")

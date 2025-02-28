@@ -57,6 +57,7 @@ def get_pca_forward(args):
             attention_mask,
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
+            layer_idx=self.layer_idx,
             **kwargs,
         )
 

@@ -4,8 +4,9 @@ from methods.common.configure_model import get_h2o_args, get_topk_args, get_pca_
 from methods.common.configure_model import get_modifier
 from methods import init_logger, finish_logger
 from methods.common.ppl import get_model, evaluate_ppl
-from methods.pca_topk.utils import save_collected_attention_data
-from methods.pca_topk.utils import compute_and_save_statistics
+# from methods.pca_topk.utils import save_collected_attention_data
+# from methods.pca_topk.utils import compute_and_save_statistics
+from methods.thresh.utils import save_experiment_data
 import methods
 
 import argparse
@@ -117,6 +118,7 @@ if __name__ == "__main__":
         if methods.LOGGER is not None:
             methods.LOGGER.log_ppl(ppl)
             
+    save_experiment_data(args)
     #save_collected_attention_data(args)
     #compute_and_save_statistics(args, ppl)
     
