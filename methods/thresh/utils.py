@@ -24,6 +24,9 @@ percentile_sampling_rate = 0.001
 query_data = []
 query_sampling_rate = 0.003
 
+# Thresh % accumulator (set to 1 to avoid div 0 errors)
+total_scores = 1
+kept_scores = 1
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -56,8 +59,7 @@ def thresh_attention_forward(
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
         attn_weights = attn_weights + causal_mask
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+    attn_weights_softmax = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     
     # Shape [batch, num_heads, query_length, key_length]
     B, H, Q, K = attn_weights.shape
@@ -69,7 +71,7 @@ def thresh_attention_forward(
     #        print("percentile sampled")
             for query_idx in range(Q):
                     # Because of causality, valid keys for query index i are first (i+1) elements
-                    row = attn_weights[0, head_idx, query_idx, :query_idx+1]
+                    row = attn_weights_softmax[0, head_idx, query_idx, :query_idx+1]
                     p25 = torch.quantile(row.float(), 0.25).item()
                     p50 = torch.quantile(row.float(), 0.50).item()
                     p75 = torch.quantile(row.float(), 0.75).item()
@@ -86,7 +88,7 @@ def thresh_attention_forward(
      #       print("query sampled")
             #Collect per query data
             sample_query_idx = random.randint(0,Q-1)
-            full_row = attn_weights[0, head_idx, sample_query_idx, :sample_query_idx+1].detach().cpu().tolist()
+            full_row = attn_weights_softmax[0, head_idx, sample_query_idx, :sample_query_idx+1].detach().cpu().tolist()
             query_data.append({
                 'layer_idx': getattr(module, 'layer_idx', -1),
                 'head_idx': head_idx,
@@ -94,24 +96,88 @@ def thresh_attention_forward(
                 'row_length': sample_query_idx+1,
                 'attention_row': full_row,
             })
-        
+    
+    # -- THRESH START --
+    global total_scores, kept_scores
+
+    # TODO: Add command args for these two
+    PERCENTILE = 0.5
+    WARMUP_QUERIES = 32
+    
+    # Collect warmup data
+    x_vals = []
+    y_vals = []
+    for i in range(WARMUP_QUERIES):
+        # Valid keys for query row i: first (i+1) elements
+        row_scores = attn_weights_softmax[0, 0, i, : i+1]
+        quantile_value = torch.quantile(row_scores.float(), PERCENTILE).item()
+        x_vals.append(i + 1) # Use (i+1) so that x starts at 1
+        y_vals.append(quantile_value)
+    
+    epsilon = 1e-8 # avoid log(0)
+    x_vals_np = np.array(x_vals, dtype=float)
+    y_vals_np = np.array(y_vals, dtype=float)
+    X = np.log(x_vals_np) # x_vals already have 1 added
+    Y = np.log(y_vals_np + epsilon) # add epsilon
+    slope, intercept = np.polyfit(X, Y, 1)
+    a = np.exp(intercept)
+    b = slope
+
+    # Generate threshold matrix
+    thresholds = torch.arange(1, Q + 1, device=attn_weights_softmax.device, dtype=attn_weights_softmax.dtype)
+    thresholds = a * (thresholds ** b)
+    thresholds = thresholds.view(1, 1, Q, 1)  # cast size
+
+    # Generate mask based on threshold
+    keep_mask = (attn_weights_softmax >= thresholds) 
+    
+    # Also keep the diagonal (most recent key/value) to ensure at least one value remains.
+    diag_mask = torch.eye(Q, device=attn_weights_softmax.device, dtype=torch.bool).view(1, 1, Q, Q)
+    keep_mask = keep_mask | diag_mask
+
+    # Increment num_scores and kept_scores
+    total_scores += B * H * (((Q+1) * K)//2)    
+    kept_scores += keep_mask.sum().item()
+    
+    # Create masked attention: entries not kept are set to -inf.
+    attn_weights_masked = torch.full_like(attn_weights, float('-inf'))
+    attn_weights_masked[keep_mask] = attn_weights[keep_mask]
+    
+    # -- THRESH END --
+
+    # softmax, dropout, etc.
+    attn_weights = nn.functional.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+    
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
 
-def save_experiment_data(args):
+def save_experiment_data(args, ppl):
     global percentile_data, query_data
 
+    filename = f"thresh_{args.model_id.split('/')[-1]}_exp"
+    
     exp_data = {
         'percentile_data': percentile_data,
         'query_data': query_data,
         'model_id': args.model_id,
     }
-    
-    filename = f"thresh_{args.model_id.split('/')[-1]}_exp.json"
-    
-    with open(filename, 'w') as f:
+
+    with open(filename + ".json", 'w') as f:
         json.dump(exp_data, f, indent=2)
     
-    print(f"Experiment data saved to {filename}")
+    print(f"Experiment data saved to {filename}.json")
+
+
+    global kept_scores, total_scores
+
+    with open(filename + ".txt", 'w') as f:
+        f.write('Statistics\n')
+        f.write('==========\n')
+        f.write(f"Compression Ratio: {(kept_scores/total_scores):.3f}\n")
+        f.write(f"Perplexity: {ppl.float():.5f}\n")
+    
+    print(f"Experiment data saved to {filename}.txt")
+

@@ -118,7 +118,7 @@ if __name__ == "__main__":
         if methods.LOGGER is not None:
             methods.LOGGER.log_ppl(ppl)
             
-    save_experiment_data(args)
+    save_experiment_data(args, ppl)
     #save_collected_attention_data(args)
     #compute_and_save_statistics(args, ppl)
     
