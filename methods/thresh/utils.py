@@ -17,12 +17,16 @@ try:
 except ImportError:
     AXONN_AVAILABLE=False
 
-# Experiment collectors
+# Powerlaw experiment collectors
 powerlaw_percentile_acc = {}
 powerlaw_query_acc = {}
-POWERLAW_SAMPLING_RATE = 0.001
+POWERLAW_SAMPLING_RATE = 0.01
 
-# Thresh % accumulator (set to 1 to avoid div 0 errors)
+# Retain % experiment collectors
+retain_acc = []
+RETAIN_SAMPLING_RATE = 0.01
+
+# Global retain % accumulator (set to 1 to avoid div 0 errors)
 total_scores = 1
 kept_scores = 1
 
@@ -177,6 +181,25 @@ def thresh_attention_forward(
     # Also keep the diagonal (most recent key/value) to ensure at least one value remains.
     diag_mask = torch.eye(Q, device=attn_weights_softmax.device, dtype=torch.bool).view(1, 1, Q, Q)
     keep_mask = keep_mask | diag_mask
+    
+    # Collect keys retained data
+    if not args.no_json:
+        global retain_acc, RETAIN_SAMPLING_RATE
+        
+        for head_idx in range(H):
+            if random.random() < RETAIN_SAMPLING_RATE: # Sample across layers and heads
+                for query_idx in range(Q):
+                    query_total_scores = query_idx + 1
+                    query_kept_scores = keep_mask[0, head_idx, query_idx, :query_idx+1].sum().item()
+                    
+                    query_retain = query_kept_scores / query_total_scores
+
+                    retain_acc.append({
+                        "layer_idx": layer_idx,
+                        "head_idx": head_idx,
+                        "query_idx": query_idx,
+                        "retain": query_retain
+                    })
 
     # Increment num_scores and kept_scores
     total_scores += B * H * (((Q+1) * K)//2)    
@@ -199,16 +222,16 @@ def thresh_attention_forward(
 
 def save_experiment_data(args, ppl):
     filename = f"thresh_{args.model_id.split('/')[-1]}_pctl{args.percentile}_iwmp{args.init_warmup}"
-    global powerlaw_percentile_acc, powerlaw_query_acc, max_layer, max_head
+    global powerlaw_percentile_acc, powerlaw_query_acc, retain_acc, max_layer, max_head
     
     if not args.no_json:
         print("Calculating aggregate statistics")
         layer_bin_size = math.ceil((max_layer + 1) / 8)
         head_bin_size = math.ceil((max_head + 1) / 8)
         
-        aggregated = {}
+        powerlaw_agg = {}
 
-        def aggregate_fits(fit_list):
+        def aggregate_powerlaw_fits(fit_list):
             fit_array = np.array(fit_list, dtype=float)  # shape: (N, 3)
             mean_a = float(np.mean(fit_array[:, 0]))
             var_a  = float(np.var(fit_array[:, 0]))
@@ -226,25 +249,42 @@ def save_experiment_data(args, ppl):
             layer_bin = layer_idx // layer_bin_size
             head_bin = head_idx // head_bin_size
             bin_key = f"layer_{layer_bin}_head_{head_bin}"
-            if bin_key not in aggregated:
-                aggregated[bin_key] = {"percentile": {}, "query": {}}
+            if bin_key not in powerlaw_agg:
+                powerlaw_agg[bin_key] = {"percentile": {}, "query": {}}
             for perc in ["p25", "p50", "p75"]:
                 fits = perc_dict.get(perc, [])
                 if fits:
-                    aggregated[bin_key]["percentile"][perc] = aggregate_fits(fits)
+                    powerlaw_agg[bin_key]["percentile"][perc] = aggregate_powerlaw_fits(fits)
 
         # Process per-query fits from powerlaw_query_acc.
         for (layer_idx, head_idx), fit_list in powerlaw_query_acc.items():
             layer_bin = layer_idx // layer_bin_size
             head_bin = head_idx // head_bin_size
             bin_key = f"layer_{layer_bin}_head_{head_bin}"
-            if bin_key not in aggregated:
-                aggregated[bin_key] = {"percentile": {}, "query": {}}
+            if bin_key not in powerlaw_agg:
+                powerlaw_agg[bin_key] = {"percentile": {}, "query": {}}
             if fit_list:
-                aggregated[bin_key]["query"] = aggregate_fits(fit_list)
+                powerlaw_agg[bin_key]["query"] = aggregate_powerlaw_fits(fit_list)
         
+        # Process retain stats
+        retain_agg_temp = {}
+        for item in retain_acc:
+            q_idx = item["query_idx"]
+            if q_idx not in retain_agg_temp:
+                retain_agg_temp[q_idx] = []
+            retain_agg_temp[q_idx].append(item["retain"])
+        
+        retain_agg = {}
+        for q_idx, values in retain_agg_temp.items():
+            retain_agg[str(q_idx)] = {
+                "mean_retain": float(np.mean(values)),
+                "var_retain": float(np.var(values))
+            }
+
+
         exp_data = {
-            'powerlaw_data': aggregated,
+            'powerlaw_data': powerlaw_agg,
+            'retain_data': retain_agg,
             'model_id': args.model_id,
             'percentile': args.percentile,
             'init_warmup': args.init_warmup,
@@ -261,9 +301,9 @@ def save_experiment_data(args, ppl):
 
         with open(filename + ".txt", 'w') as f:
             f.write('Statistics\n')
-            f.write(f"Model: {args.model_id}")
-            f.write(f"Percentile: {args.percentile}")
-            f.write(f"Warmup size: {args.init_warmup}")
+            f.write(f"Model: {args.model_id}\n")
+            f.write(f"Percentile: {args.percentile}\n")
+            f.write(f"Warmup size: {args.init_warmup}\n")
             f.write('==========\n')
             f.write(f"Compression Ratio: {(kept_scores/total_scores):.3f}\n")
             f.write(f"Perplexity: {ppl.float():.5f}\n")
