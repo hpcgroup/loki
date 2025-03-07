@@ -18,15 +18,17 @@ except ImportError:
     AXONN_AVAILABLE=False
 
 # Experiment collectors
-percentile_data = []
-percentile_sampling_rate = 0.001
-
-query_data = []
-query_sampling_rate = 0.003
+powerlaw_percentile_acc = {}
+powerlaw_query_acc = {}
+POWERLAW_SAMPLING_RATE = 0.001
 
 # Thresh % accumulator (set to 1 to avoid div 0 errors)
 total_scores = 1
 kept_scores = 1
+
+# Counters (theres probably a better way to do this)
+max_layer = -1
+max_head = -1
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -39,9 +41,79 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
+def fit_powerlaw_linreg(x: np.ndarray, y: np.ndarray):
+    epsilon = 1e-8
+    
+    X = np.log(x + 1)
+    Y = np.log(y + epsilon)
+    
+    slope, intercept = np.polyfit(X, Y, 1)
+    
+    y_pred = intercept + slope * X
+    
+    ss_res = np.sum((Y - y_pred)**2)
+    ss_tot = np.sum((Y - np.mean(Y))**2)
+    
+    r2 = 1.0 - ss_res/ss_tot if ss_tot != 0 else 1.0
+    a = np.exp(intercept)
+    b = slope
+    
+    return a, b, r2
+
+def collect_powerlaw_stats(attn_weights_softmax, layer_idx):
+    global powerlaw_percentile_acc, powerlaw_query_acc, POWERLAW_SAMPLING_RATE
+
+    B, H, Q, K = attn_weights_softmax.shape
+    
+    # Across heads
+    for head_idx in range(H):
+        # Random sample
+        if random.random() < POWERLAW_SAMPLING_RATE:
+            x_np = np.arange(Q, dtype=float)
+            pvals = { "p25": [], "p50": [], "p75": [] }
+
+            for query_idx in range(Q):
+                    # Because of causality, valid keys for query index i are first (i+1) elements
+                    row = attn_weights_softmax[0, head_idx, query_idx, :query_idx+1]
+                    p25 = torch.quantile(row.float(), 0.25).item()
+                    p50 = torch.quantile(row.float(), 0.50).item()
+                    p75 = torch.quantile(row.float(), 0.75).item()
+                    pvals["p25"].append(p25)
+                    pvals["p50"].append(p50)
+                    pvals["p75"].append(p75)
+            
+            # Unique key for a given layer and head
+            layer_head_key = (layer_idx, head_idx)
+            if layer_head_key not in powerlaw_percentile_acc:
+                powerlaw_percentile_acc[layer_head_key] = {"p25": [], "p50": [], "p75": []}
+            
+            # Fit each percentile and add a, b, r2 to object
+            for perc_key in ["p25", "p50", "p75"]:
+                y_np = np.array(pvals[perc_key], dtype=float)
+                a, b, r2 = fit_powerlaw_linreg(x_np, y_np)
+                powerlaw_percentile_acc[layer_head_key][perc_key].append((a, b, r2))
+        
+        if random.random() < POWERLAW_SAMPLING_RATE*3:
+            sample_query_idx = random.randint(128,Q-1) # min q len is 128 since less than that is redundant (arbitrary)
+            
+            # Get and sort the row
+            row = attn_weights_softmax[0, head_idx, sample_query_idx, : sample_query_idx + 1]
+            sorted_row, _ = torch.sort(row, descending = True)
+ 
+            x_np = np.arange(sorted_row.numel(), dtype=float)
+            y_np = sorted_row.cpu().numpy().astype(float)
+
+            a, b, r2 = fit_powerlaw_linreg(x_np, y_np)
+
+            layer_head_key = (layer_idx, head_idx)
+            if layer_head_key not in powerlaw_query_acc:
+                powerlaw_query_acc[layer_head_key] = []
+
+            powerlaw_query_acc[layer_head_key].append((a, b, r2))
 
 def thresh_attention_forward(
     module: nn.Module,
+    args,
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -50,7 +122,8 @@ def thresh_attention_forward(
     dropout: float = 0.0,
     layer_idx: int = None,
     **kwargs,
-):
+):    
+
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
@@ -64,45 +137,19 @@ def thresh_attention_forward(
     # Shape [batch, num_heads, query_length, key_length]
     B, H, Q, K = attn_weights.shape
     
-    # Collect percentile data 
-    for head_idx in range(H):
-        # Random sample
-        if random.random() < percentile_sampling_rate:
-    #        print("percentile sampled")
-            for query_idx in range(Q):
-                    # Because of causality, valid keys for query index i are first (i+1) elements
-                    row = attn_weights_softmax[0, head_idx, query_idx, :query_idx+1]
-                    p25 = torch.quantile(row.float(), 0.25).item()
-                    p50 = torch.quantile(row.float(), 0.50).item()
-                    p75 = torch.quantile(row.float(), 0.75).item()
-                    percentile_data.append({
-                        'layer_idx': layer_idx,
-                        'head_idx': head_idx,
-                        'query_idx': query_idx,
-                        'p25': p25,
-                        'p50': p50,
-                        'p75': p75,
-                    })
+    global max_layer, max_head # There is a better way to do this
+    max_layer = max(max_layer, layer_idx)
+    max_head = H
 
-        if random.random() < query_sampling_rate: 
-     #       print("query sampled")
-            #Collect per query data
-            sample_query_idx = random.randint(0,Q-1)
-            full_row = attn_weights_softmax[0, head_idx, sample_query_idx, :sample_query_idx+1].detach().cpu().tolist()
-            query_data.append({
-                'layer_idx': getattr(module, 'layer_idx', -1),
-                'head_idx': head_idx,
-                'query_idx': sample_query_idx,
-                'row_length': sample_query_idx+1,
-                'attention_row': full_row,
-            })
-    
+    # Collect percentile and query data for powerlaw fitting
+    if not args.no_json:
+        collect_powerlaw_stats(attn_weights_softmax, layer_idx)
+        
     # -- THRESH START --
     global total_scores, kept_scores
 
-    # TODO: Add command args for these two
-    PERCENTILE = 0.5
-    WARMUP_QUERIES = 32
+    PERCENTILE = args.percentile
+    WARMUP_QUERIES = int(args.init_warmup)
     
     # Collect warmup data
     x_vals = []
@@ -111,17 +158,13 @@ def thresh_attention_forward(
         # Valid keys for query row i: first (i+1) elements
         row_scores = attn_weights_softmax[0, 0, i, : i+1]
         quantile_value = torch.quantile(row_scores.float(), PERCENTILE).item()
-        x_vals.append(i + 1) # Use (i+1) so that x starts at 1
+        x_vals.append(i)
         y_vals.append(quantile_value)
     
-    epsilon = 1e-8 # avoid log(0)
-    x_vals_np = np.array(x_vals, dtype=float)
-    y_vals_np = np.array(y_vals, dtype=float)
-    X = np.log(x_vals_np) # x_vals already have 1 added
-    Y = np.log(y_vals_np + epsilon) # add epsilon
-    slope, intercept = np.polyfit(X, Y, 1)
-    a = np.exp(intercept)
-    b = slope
+    x_np = np.array(x_vals, dtype=float)
+    y_np = np.array(y_vals, dtype=float)
+    
+    a, b, _ = fit_powerlaw_linreg(x_np, y_np)
 
     # Generate threshold matrix
     thresholds = torch.arange(1, Q + 1, device=attn_weights_softmax.device, dtype=attn_weights_softmax.dtype)
@@ -155,29 +198,75 @@ def thresh_attention_forward(
     return attn_output, attn_weights
 
 def save_experiment_data(args, ppl):
-    global percentile_data, query_data
-
-    filename = f"thresh_{args.model_id.split('/')[-1]}_exp"
+    filename = f"thresh_{args.model_id.split('/')[-1]}_pctl{args.percentile}_iwmp{args.init_warmup}"
+    global powerlaw_percentile_acc, powerlaw_query_acc, max_layer, max_head
     
-    exp_data = {
-        'percentile_data': percentile_data,
-        'query_data': query_data,
-        'model_id': args.model_id,
-    }
+    if not args.no_json:
+        print("Calculating aggregate statistics")
+        layer_bin_size = math.ceil((max_layer + 1) / 8)
+        head_bin_size = math.ceil((max_head + 1) / 8)
+        
+        aggregated = {}
 
-    with open(filename + ".json", 'w') as f:
-        json.dump(exp_data, f, indent=2)
+        def aggregate_fits(fit_list):
+            fit_array = np.array(fit_list, dtype=float)  # shape: (N, 3)
+            mean_a = float(np.mean(fit_array[:, 0]))
+            var_a  = float(np.var(fit_array[:, 0]))
+            mean_b = float(np.mean(fit_array[:, 1]))
+            var_b  = float(np.var(fit_array[:, 1]))
+            mean_r2 = float(np.mean(fit_array[:, 2]))
+            var_r2  = float(np.var(fit_array[:, 2]))
+            return {"mean_a": mean_a, "var_a": var_a,
+                    "mean_b": mean_b, "var_b": var_b,
+                    "mean_r2": mean_r2, "var_r2": var_r2}
+
+        # Process percentile fits from powerlaw_percentile_acc.
+        for (layer_idx, head_idx), perc_dict in powerlaw_percentile_acc.items():
+            # Determine bin indices.
+            layer_bin = layer_idx // layer_bin_size
+            head_bin = head_idx // head_bin_size
+            bin_key = f"layer_{layer_bin}_head_{head_bin}"
+            if bin_key not in aggregated:
+                aggregated[bin_key] = {"percentile": {}, "query": {}}
+            for perc in ["p25", "p50", "p75"]:
+                fits = perc_dict.get(perc, [])
+                if fits:
+                    aggregated[bin_key]["percentile"][perc] = aggregate_fits(fits)
+
+        # Process per-query fits from powerlaw_query_acc.
+        for (layer_idx, head_idx), fit_list in powerlaw_query_acc.items():
+            layer_bin = layer_idx // layer_bin_size
+            head_bin = head_idx // head_bin_size
+            bin_key = f"layer_{layer_bin}_head_{head_bin}"
+            if bin_key not in aggregated:
+                aggregated[bin_key] = {"percentile": {}, "query": {}}
+            if fit_list:
+                aggregated[bin_key]["query"] = aggregate_fits(fit_list)
+        
+        exp_data = {
+            'powerlaw_data': aggregated,
+            'model_id': args.model_id,
+            'percentile': args.percentile,
+            'init_warmup': args.init_warmup,
+        }
+
+        with open(filename + ".json", 'w') as f:
+            json.dump(exp_data, f, indent=2)
+        
+        print(f"Experiment data saved to {filename}.json")
+
     
-    print(f"Experiment data saved to {filename}.json")
+    if not args.no_txt:
+        global kept_scores, total_scores
 
-
-    global kept_scores, total_scores
-
-    with open(filename + ".txt", 'w') as f:
-        f.write('Statistics\n')
-        f.write('==========\n')
-        f.write(f"Compression Ratio: {(kept_scores/total_scores):.3f}\n")
-        f.write(f"Perplexity: {ppl.float():.5f}\n")
-    
-    print(f"Experiment data saved to {filename}.txt")
+        with open(filename + ".txt", 'w') as f:
+            f.write('Statistics\n')
+            f.write(f"Model: {args.model_id}")
+            f.write(f"Percentile: {args.percentile}")
+            f.write(f"Warmup size: {args.init_warmup}")
+            f.write('==========\n')
+            f.write(f"Compression Ratio: {(kept_scores/total_scores):.3f}\n")
+            f.write(f"Perplexity: {ppl.float():.5f}\n")
+        
+        print(f"Experiment data saved to {filename}.txt")
 

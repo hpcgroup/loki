@@ -27,7 +27,10 @@ def get_save_tensor_args(parser):
 
 def get_thresh_args(parser):
     parser.add_argument("--use-thresh", action='store_true', default=False, help="use the Thresh algos")
-    # Template
+    parser.add_argument("--no-json", action='store_true', default=False, help="Collect and save data to json")
+    parser.add_argument("--no-txt", action='store_true', default=False, help="Collect and save data to txt")
+    parser.add_argument("--percentile", type=float, default=0.5)
+    parser.add_argument("--init-warmup", type=float, default=32)
     return parser
 
 
@@ -75,7 +78,8 @@ def get_config_dict(args):
         config_dict["transform_dataset"] = args.transform_dataset
     elif args.use_thresh:
         config_dict["method"] = "thresh"
-        # Template
+        config_dict["percentile"] = args.percentile
+        config_dict["init_warmup"] = args.init_warmup
     else:
         config_dict["method"] = "base_hf"
     return config_dict

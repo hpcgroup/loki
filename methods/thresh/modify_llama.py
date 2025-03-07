@@ -51,6 +51,7 @@ def get_pca_forward(args):
 
         attn_output, attn_weights = thresh_attention_forward(
             self,
+            args,
             query_states,
             key_states,
             value_states,
