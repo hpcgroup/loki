@@ -20,7 +20,7 @@ except ImportError:
 # Powerlaw experiment collectors
 powerlaw_percentile_acc = {}
 powerlaw_query_acc = {}
-POWERLAW_SAMPLING_RATE = 0.01
+POWERLAW_SAMPLING_RATE = 0.02
 
 # Retain % experiment collectors
 retain_acc = []
@@ -29,10 +29,6 @@ RETAIN_SAMPLING_RATE = 0.01
 # Global retain % accumulator (set to 1 to avoid div 0 errors)
 total_scores = 1
 kept_scores = 1
-
-# Counters (theres probably a better way to do this)
-max_layer = -1
-max_head = -1
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -96,24 +92,38 @@ def collect_powerlaw_stats(attn_weights_softmax, layer_idx):
                 y_np = np.array(pvals[perc_key], dtype=float)
                 a, b, r2 = fit_powerlaw_linreg(x_np, y_np)
                 powerlaw_percentile_acc[layer_head_key][perc_key].append((a, b, r2))
-        
-        if random.random() < POWERLAW_SAMPLING_RATE*3:
-            sample_query_idx = random.randint(128,Q-1) # min q len is 128 since less than that is redundant (arbitrary)
             
-            # Get and sort the row
-            row = attn_weights_softmax[0, head_idx, sample_query_idx, : sample_query_idx + 1]
-            sorted_row, _ = torch.sort(row, descending = True)
- 
-            x_np = np.arange(sorted_row.numel(), dtype=float)
-            y_np = sorted_row.cpu().numpy().astype(float)
 
-            a, b, r2 = fit_powerlaw_linreg(x_np, y_np)
+            # Per query data collection
+            a_acc = []
+            b_acc = []
+            r2_acc = []
+            for sample_query_idx in range(256, Q-1, 256): 
+                # Get and sort the row
+                row = attn_weights_softmax[0, head_idx, sample_query_idx, : sample_query_idx + 1]
+                sorted_row, _ = torch.sort(row, descending = True)
+     
+                x_np = np.arange(sorted_row.numel(), dtype=float)
+                y_np = sorted_row.cpu().numpy().astype(float)
 
+                a, b, r2 = fit_powerlaw_linreg(x_np, y_np)
+                
+                a_acc.append(a)
+                b_acc.append(b)
+                r2_acc.append(r2)
+
+            a_mean = float(np.mean(np.array(a_acc)))
+            a_var = float(np.var(np.array(a_acc)))
+            b_mean = float(np.mean(np.array(b_acc)))
+            b_var = float(np.var(np.array(b_acc)))
+            r2_mean = float(np.mean(np.array(r2_acc)))
+            r2_var = float(np.var(np.array(r2_acc)))
+            
             layer_head_key = (layer_idx, head_idx)
             if layer_head_key not in powerlaw_query_acc:
                 powerlaw_query_acc[layer_head_key] = []
 
-            powerlaw_query_acc[layer_head_key].append((a, b, r2))
+            powerlaw_query_acc[layer_head_key].append((a_mean, a_var, b_mean, b_var, r2_mean, r2_var))
 
 def thresh_attention_forward(
     module: nn.Module,
@@ -141,10 +151,6 @@ def thresh_attention_forward(
     # Shape [batch, num_heads, query_length, key_length]
     B, H, Q, K = attn_weights.shape
     
-    global max_layer, max_head # There is a better way to do this
-    max_layer = max(max_layer, layer_idx)
-    max_head = H
-
     # Collect percentile and query data for powerlaw fitting
     if not args.no_json:
         collect_powerlaw_stats(attn_weights_softmax, layer_idx)
@@ -226,9 +232,7 @@ def save_experiment_data(args, ppl):
     
     if not args.no_json:
         print("Calculating aggregate statistics")
-        layer_bin_size = math.ceil((max_layer + 1) / 8)
-        head_bin_size = math.ceil((max_head + 1) / 8)
-        
+                
         powerlaw_agg = {}
 
         def aggregate_powerlaw_fits(fit_list):
@@ -242,29 +246,39 @@ def save_experiment_data(args, ppl):
             return {"mean_a": mean_a, "var_a": var_a,
                     "mean_b": mean_b, "var_b": var_b,
                     "mean_r2": mean_r2, "var_r2": var_r2}
+        
+        def aggregate_query_fits(fit_list):
+            fit_array = np.array(fit_list, dtype=float)  # shape: (N, 6)
+            mean_a = float(np.mean(fit_array[:, 0]))
+            var_a  = float(np.mean(fit_array[:, 1]))  # average variance
+            mean_b = float(np.mean(fit_array[:, 2]))
+            var_b  = float(np.mean(fit_array[:, 3]))
+            mean_r2 = float(np.mean(fit_array[:, 4]))
+            var_r2  = float(np.mean(fit_array[:, 5]))
+            return {"mean_a": mean_a, "var_a": var_a,
+                    "mean_b": mean_b, "var_b": var_b,
+                    "mean_r2": mean_r2, "var_r2": var_r2}
+
 
         # Process percentile fits from powerlaw_percentile_acc.
         for (layer_idx, head_idx), perc_dict in powerlaw_percentile_acc.items():
-            # Determine bin indices.
-            layer_bin = layer_idx // layer_bin_size
-            head_bin = head_idx // head_bin_size
-            bin_key = f"layer_{layer_bin}_head_{head_bin}"
-            if bin_key not in powerlaw_agg:
-                powerlaw_agg[bin_key] = {"percentile": {}, "query": {}}
+            key_str = f"layer_{layer_idx}_head_{head_idx}"
+            
+            if key_str not in powerlaw_agg:
+                powerlaw_agg[key_str] = {"percentile": {}, "query": {}}
             for perc in ["p25", "p50", "p75"]:
                 fits = perc_dict.get(perc, [])
                 if fits:
-                    powerlaw_agg[bin_key]["percentile"][perc] = aggregate_powerlaw_fits(fits)
+                    powerlaw_agg[key_str]["percentile"][perc] = aggregate_powerlaw_fits(fits)
 
         # Process per-query fits from powerlaw_query_acc.
         for (layer_idx, head_idx), fit_list in powerlaw_query_acc.items():
-            layer_bin = layer_idx // layer_bin_size
-            head_bin = head_idx // head_bin_size
-            bin_key = f"layer_{layer_bin}_head_{head_bin}"
-            if bin_key not in powerlaw_agg:
-                powerlaw_agg[bin_key] = {"percentile": {}, "query": {}}
+            key_str = f"layer_{layer_idx}_head_{head_idx}"
+            
+            if key_str not in powerlaw_agg:
+                powerlaw_agg[key_str] = {"percentile": {}, "query": {}}
             if fit_list:
-                powerlaw_agg[bin_key]["query"] = aggregate_powerlaw_fits(fit_list)
+                powerlaw_agg[key_str]["query"] = aggregate_powerlaw_fits(fit_list)
         
         # Process retain stats
         retain_agg_temp = {}
