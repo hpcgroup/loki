@@ -20,11 +20,11 @@ except ImportError:
 # Powerlaw experiment collectors
 powerlaw_percentile_acc = {}
 powerlaw_query_acc = {}
-POWERLAW_SAMPLING_RATE = 0.02
+POWERLAW_SAMPLING_RATE = 0.1
 
 # Retain % experiment collectors
 retain_acc = []
-RETAIN_SAMPLING_RATE = 0.01
+RETAIN_SAMPLING_RATE = 0.1
 
 # Global retain % accumulator (set to 1 to avoid div 0 errors)
 total_scores = 1
@@ -69,60 +69,69 @@ def collect_powerlaw_stats(attn_weights_softmax, layer_idx):
     for head_idx in range(H):
         # Random sample
         if random.random() < POWERLAW_SAMPLING_RATE:
-            x_np = np.arange(Q, dtype=float)
             pvals = { "p25": [], "p50": [], "p75": [] }
+            query_acc = { "a": [], "b": [], "r2": [] }
 
             for query_idx in range(Q):
-                    # Because of causality, valid keys for query index i are first (i+1) elements
-                    row = attn_weights_softmax[0, head_idx, query_idx, :query_idx+1]
-                    p25 = torch.quantile(row.float(), 0.25).item()
-                    p50 = torch.quantile(row.float(), 0.50).item()
-                    p75 = torch.quantile(row.float(), 0.75).item()
-                    pvals["p25"].append(p25)
-                    pvals["p50"].append(p50)
-                    pvals["p75"].append(p75)
-            
-            # Unique key for a given layer and head
+                # Because of causality, valid keys for query index i are first (i+1) elements
+                row = attn_weights_softmax[0, head_idx, query_idx, :query_idx+1]
+                sorted_row, _ = torch.sort(row.float())
+                
+                # Calculate and get percentile data
+                n = sorted_row.numel()
+                
+                idx25 = int(0.25 * (n - 1))
+                idx50 = int(0.50 * (n - 1))
+                idx75 = int(0.75 * (n - 1))
+                
+                p25 = sorted_row[idx25].item()
+                p50 = sorted_row[idx50].item()
+                p75 = sorted_row[idx75].item()
+
+                pvals["p25"].append(p25)
+                pvals["p50"].append(p50)
+                pvals["p75"].append(p75)
+        
+
+                # Calculate and get per query data
+                if query_idx > 1 and query_idx % 128 == 0: # Simulating start & step size 
+                    x_np = np.arange(sorted_row.numel(), dtype=float)
+                    y_np = sorted_row.cpu().numpy().astype(float)
+
+                    a, b, r2 = fit_powerlaw_linreg(x_np, y_np)
+                    
+                    query_acc["a"].append(a) 
+                    query_acc["b"].append(b)
+                    query_acc["r2"].append(r2)
+
+
+            # Set default dictionary path for percentile if it doesn't exist
             layer_head_key = (layer_idx, head_idx)
             if layer_head_key not in powerlaw_percentile_acc:
                 powerlaw_percentile_acc[layer_head_key] = {"p25": [], "p50": [], "p75": []}
             
-            # Fit each percentile and add a, b, r2 to object
+            # Fit each percentile and add a, b, r2 to experiment accumulator
             for perc_key in ["p25", "p50", "p75"]:
+                x_np = np.arange(Q, dtype=float)
                 y_np = np.array(pvals[perc_key], dtype=float)
                 a, b, r2 = fit_powerlaw_linreg(x_np, y_np)
                 powerlaw_percentile_acc[layer_head_key][perc_key].append((a, b, r2))
             
 
-            # Per query data collection
-            a_acc = []
-            b_acc = []
-            r2_acc = []
-            for sample_query_idx in range(256, Q-1, 256): 
-                # Get and sort the row
-                row = attn_weights_softmax[0, head_idx, sample_query_idx, : sample_query_idx + 1]
-                sorted_row, _ = torch.sort(row, descending = True)
-     
-                x_np = np.arange(sorted_row.numel(), dtype=float)
-                y_np = sorted_row.cpu().numpy().astype(float)
-
-                a, b, r2 = fit_powerlaw_linreg(x_np, y_np)
-                
-                a_acc.append(a)
-                b_acc.append(b)
-                r2_acc.append(r2)
-
-            a_mean = float(np.mean(np.array(a_acc)))
-            a_var = float(np.var(np.array(a_acc)))
-            b_mean = float(np.mean(np.array(b_acc)))
-            b_var = float(np.var(np.array(b_acc)))
-            r2_mean = float(np.mean(np.array(r2_acc)))
-            r2_var = float(np.var(np.array(r2_acc)))
+            # Caclulate per query data 
+            a_mean = float(np.mean(np.array(query_acc["a"])))
+            a_var = float(np.var(np.array(query_acc["a"])))
+            b_mean = float(np.mean(np.array(query_acc["b"])))
+            b_var = float(np.var(np.array(query_acc["b"])))
+            r2_mean = float(np.mean(np.array(query_acc["r2"])))
+            r2_var = float(np.var(np.array(query_acc["r2"])))
             
+            # Set default dictionary path
             layer_head_key = (layer_idx, head_idx)
             if layer_head_key not in powerlaw_query_acc:
                 powerlaw_query_acc[layer_head_key] = []
-
+            
+            # Add experiment statistics to accumulator
             powerlaw_query_acc[layer_head_key].append((a_mean, a_var, b_mean, b_var, r2_mean, r2_var))
 
 def thresh_attention_forward(
@@ -278,7 +287,7 @@ def save_experiment_data(args, ppl):
             if key_str not in powerlaw_agg:
                 powerlaw_agg[key_str] = {"percentile": {}, "query": {}}
             if fit_list:
-                powerlaw_agg[key_str]["query"] = aggregate_powerlaw_fits(fit_list)
+                powerlaw_agg[key_str]["query"] = aggregate_query_fits(fit_list)
         
         # Process retain stats
         retain_agg_temp = {}
