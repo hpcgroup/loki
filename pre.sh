@@ -2,6 +2,9 @@ module unload python
 source ../loki-venv-2/bin/activate
 #huggingface-cli login
 
+# Should not have to be here
+export SCRATCH="$HOME/scratch.bhatele-lab"
+
 NNODES=$SLURM_JOB_NUM_NODES
 GPUS=$(( NNODES * 4 ))
 export MASTER_ADDR=$(hostname)

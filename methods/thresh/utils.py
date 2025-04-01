@@ -20,11 +20,11 @@ except ImportError:
 # Powerlaw experiment collectors
 powerlaw_percentile_acc = {}
 powerlaw_query_acc = {}
-POWERLAW_SAMPLING_RATE = 0.1
+POWERLAW_SAMPLING_RATE = 0.075
 
 # Retain % experiment collectors
 retain_acc = []
-RETAIN_SAMPLING_RATE = 0.1
+RETAIN_SAMPLING_RATE = 0.05
 
 # Global retain % accumulator (set to 1 to avoid div 0 errors)
 total_scores = 1
@@ -155,14 +155,15 @@ def thresh_attention_forward(
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
         attn_weights = attn_weights + causal_mask
 
-    attn_weights_softmax = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    
+    # Change commented line to set pre/post softmax
+    attn_weights_thresh = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+
     # Shape [batch, num_heads, query_length, key_length]
     B, H, Q, K = attn_weights.shape
     
     # Collect percentile and query data for powerlaw fitting
     if not args.no_json:
-        collect_powerlaw_stats(attn_weights_softmax, layer_idx)
+        collect_powerlaw_stats(attn_weights_thresh, layer_idx)
         
     # -- THRESH START --
     global total_scores, kept_scores
@@ -175,7 +176,7 @@ def thresh_attention_forward(
     y_vals = []
     for i in range(WARMUP_QUERIES):
         # Valid keys for query row i: first (i+1) elements
-        row_scores = attn_weights_softmax[0, 0, i, : i+1]
+        row_scores = attn_weights_thresh[0, 0, i, : i+1]
         quantile_value = torch.quantile(row_scores.float(), PERCENTILE).item()
         x_vals.append(i)
         y_vals.append(quantile_value)
@@ -186,15 +187,15 @@ def thresh_attention_forward(
     a, b, _ = fit_powerlaw_linreg(x_np, y_np)
 
     # Generate threshold matrix
-    thresholds = torch.arange(1, Q + 1, device=attn_weights_softmax.device, dtype=attn_weights_softmax.dtype)
+    thresholds = torch.arange(1, Q + 1, device=attn_weights_thresh.device, dtype=attn_weights_thresh.dtype)
     thresholds = a * (thresholds ** b)
     thresholds = thresholds.view(1, 1, Q, 1)  # cast size
 
     # Generate mask based on threshold
-    keep_mask = (attn_weights_softmax >= thresholds) 
+    keep_mask = (attn_weights_thresh >= thresholds) 
     
     # Also keep the diagonal (most recent key/value) to ensure at least one value remains.
-    diag_mask = torch.eye(Q, device=attn_weights_softmax.device, dtype=torch.bool).view(1, 1, Q, Q)
+    diag_mask = torch.eye(Q, device=attn_weights_thresh.device, dtype=torch.bool).view(1, 1, Q, Q)
     keep_mask = keep_mask | diag_mask
     
     # Collect keys retained data
@@ -332,4 +333,7 @@ def save_experiment_data(args, ppl):
             f.write(f"Perplexity: {ppl.float():.5f}\n")
         
         print(f"Experiment data saved to {filename}.txt")
+
+
+#thresh_attention_forward = torch.compile(thresh_attention_forward)
 
