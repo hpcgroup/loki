@@ -16,15 +16,15 @@ import os
 # Required to avoid tokenizers warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# Hugging Face OpenLLM Tasks and associated metrics from May 2024
+# Hugging Face OpenLLM Tasks and associated metrics from April 2025
 # https://huggingface.co/spaces/open-llm-leaderboard-old/open_llm_leaderboard
 LM_HARNESS_TASKS = {
-  "mmlu" : "acc,none",
-  "gsm8k" : "exact_match,strict-match",
-  "hellaswag" : "acc_norm,none",
-  "winogrande" : "acc,none",
-  "truthfulqa_mc2" : "acc,none",
-  "arc_challenge" : "acc_norm,none"
+    # "leaderboard_ifeval": "acc,none",
+    "leaderboard_bbh": "acc_norm,none",
+#    "leaderboard_math_hard": "exact_match,none",
+    "leaderboard_gpqa": "acc_norm,none",
+#    "leaderboard_musr": "acc_norm,none",
+    "leaderboard_mmlu_pro": "acc,none"
 }
 
 if __name__ == "__main__":
@@ -89,7 +89,7 @@ if __name__ == "__main__":
             results = lm_eval.simple_evaluate(
                 model = "hf",
                 model_args=f"pretrained={args.model_id}",
-                tasks = LM_HARNESS_TASKS.keys(),
+                tasks = list(LM_HARNESS_TASKS.keys()),
                 log_samples=False,
                 batch_size=16
             )
