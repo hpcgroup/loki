@@ -1,9 +1,8 @@
-module unload python
-source ../loki-venv-2/bin/activate
+source ../loki-venv/bin/activate
 #huggingface-cli login
 
 # Should not have to be here
-export SCRATCH="$HOME/scratch.bhatele-lab"
+#export SCRATCH="$HOME/scratch.bhatele-lab"
 
 NNODES=$SLURM_JOB_NUM_NODES
 GPUS=$(( NNODES * 4 ))
@@ -25,9 +24,9 @@ export HF_HOME="$SCRATCH/hf_cache"
 export TRANSFORMERS_HOME="$SCRATCH/hf_cache"
 export HF_DATASETS_CACHE="$SCRATCH/hf_cache"
 
-export WANDB_MODE=offline
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
+#export WANDB_MODE=offline
+#export TRANSFORMERS_OFFLINE=1
+#export HF_DATASETS_OFFLINE=1
 
 export WANDB_DIR="$SCRATCH/wandb"
 export WANDB_CACHE_DIR="$SCRATCH/.cache/wandb"

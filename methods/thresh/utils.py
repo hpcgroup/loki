@@ -9,7 +9,6 @@ import methods
 import math
 import random
 import json
-from scipy.optimize import curve_fit
 try:
     from axonn import axonn as ax
     from axonn.intra_layer import drop
@@ -42,23 +41,27 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 def fit_powerlaw_linreg(x: np.ndarray, y: np.ndarray):
-    epsilon = 1e-8
+    if len(x_np) < 16:
+        a, b, r2 = 1.0, -1.0, 0
     
-    X = np.log(x + 1)
-    Y = np.log(y + epsilon)
-    
-    slope, intercept = np.polyfit(X, Y, 1)
-    
-    y_pred = intercept + slope * X
-    
-    ss_res = np.sum((Y - y_pred)**2)
-    ss_tot = np.sum((Y - np.mean(Y))**2)
-    
-    r2 = 1.0 - ss_res/ss_tot if ss_tot != 0 else 1.0
-    a = np.exp(intercept)
-    b = slope
-    
-    return a, b, r2
+    else:   
+        epsilon = 1e-8
+        
+        X = np.log(x + 1)
+        Y = np.log(y + epsilon)
+        
+        slope, intercept = np.polyfit(X, Y, 1)
+        
+        y_pred = intercept + slope * X
+        
+        ss_res = np.sum((Y - y_pred)**2)
+        ss_tot = np.sum((Y - np.mean(Y))**2)
+        
+        r2 = 1.0 - ss_res/ss_tot if ss_tot != 0 else 1.0
+        a = np.exp(intercept)
+        b = slope
+        
+        return a, b, r2
 
 def collect_powerlaw_stats(attn_weights_softmax, layer_idx):
     global powerlaw_percentile_acc, powerlaw_query_acc, POWERLAW_SAMPLING_RATE
@@ -169,7 +172,7 @@ def thresh_attention_forward(
     global total_scores, kept_scores
 
     PERCENTILE = args.percentile
-    WARMUP_QUERIES = int(args.init_warmup)
+    WARMUP_QUERIES = min(int(args.init_warmup), Q)
     
     # Collect warmup data
     x_vals = []

@@ -1,4 +1,3 @@
-# import wandb
 from methods import init_tensor_saver
 from methods.common.configure_model import get_h2o_args, get_topk_args, get_pca_args, get_save_tensor_args, get_thresh_args
 from methods.common.configure_model import get_modifier
@@ -19,12 +18,12 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Hugging Face OpenLLM Tasks and associated metrics from April 2025
 # https://huggingface.co/spaces/open-llm-leaderboard-old/open_llm_leaderboard
 LM_HARNESS_TASKS = {
-    # "leaderboard_ifeval": "acc,none",
-    "leaderboard_bbh": "acc_norm,none",
-#    "leaderboard_math_hard": "exact_match,none",
-    "leaderboard_gpqa": "acc_norm,none",
-#    "leaderboard_musr": "acc_norm,none",
-    "leaderboard_mmlu_pro": "acc,none"
+    # "leaderboard_ifeval": "acc,none", # IndexError: index 1 is out of bounds for dimension 2 with size 1
+    # "leaderboard_bbh": "acc_norm,none", # All good, sbatch
+    "leaderboard_math_hard": "exact_match,none", # IndexError: index 1 is out of bounds for dimension 2 with size 1
+    # "leaderboard_gpqa": "acc_norm,none", # OOM
+    # "leaderboard_musr": "acc_norm,none", # OOM
+    # "leaderboard_mmlu_pro": "acc,none"
 }
 
 if __name__ == "__main__":
@@ -91,7 +90,7 @@ if __name__ == "__main__":
                 model_args=f"pretrained={args.model_id}",
                 tasks = list(LM_HARNESS_TASKS.keys()),
                 log_samples=False,
-                batch_size=16
+                batch_size=4
             )
 
         if results is not None:

@@ -1,5 +1,5 @@
 from methods.common.configure_model import get_config_dict
-#import wandb
+import wandb
 import torch
 import os
 
