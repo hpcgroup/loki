@@ -29,6 +29,16 @@ RETAIN_SAMPLING_RATE = 0.05
 total_scores = 1
 kept_scores = 1
 
+def print_debug(label: str, tensor: torch.Tensor, max_elems=10):
+    # shape, dtype
+    print(f"[DEBUG] {label}: shape={tuple(tensor.shape)}, dtype={tensor.dtype}")
+    # min, max, mean, std
+    print(f"         min={tensor.min().item():.4e}, max={tensor.max().item():.4e}, mean={tensor.mean().item():.4e}, std={tensor.std().item():.4e}")
+    # Optionally print a few elements
+    flat = tensor.view(-1)
+    print(f"         first {min(max_elems, flat.numel())} elems = {flat[:max_elems].tolist()}")
+    print("---------------------------------------------------")
+
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
     This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
@@ -41,7 +51,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 def fit_powerlaw_linreg(x: np.ndarray, y: np.ndarray):
-    if len(x_np) < 16:
+    if len(x) < 16:
         a, b, r2 = 1.0, -1.0, 0
     
     else:   
@@ -154,9 +164,12 @@ def thresh_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    print_debug("Matmul QK * scaling", attn_weights)
+    
     if attention_mask is not None:
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
         attn_weights = attn_weights + causal_mask
+        print_debug("After first softmax (attn_weights_thresh)", attn_weights_thresh)
 
     # Change commented line to set pre/post softmax
     attn_weights_thresh = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -173,6 +186,10 @@ def thresh_attention_forward(
 
     PERCENTILE = args.percentile
     WARMUP_QUERIES = min(int(args.init_warmup), Q)
+    
+    if WARMUP_QUERIES > 0:
+        row_scores = attn_weights_thresh[0, 0, 0, :1]  # just to see an example 
+        print_debug("Example row_scores for warmup [0,0,0,:1]", row_scores)
     
     # Collect warmup data
     x_vals = []
@@ -232,10 +249,12 @@ def thresh_attention_forward(
 
     # softmax, dropout, etc.
     attn_weights = nn.functional.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query.dtype)
+    print_debug("After second softmax (attn_weights)", attn_weights)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
     
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
+    print_debug("Final attn_output", attn_output)
 
     return attn_output, attn_weights
 
