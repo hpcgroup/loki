@@ -55,7 +55,7 @@ def get_pca_forward(args):
             query_states,
             key_states,
             value_states,
-            attention_mask,
+            attention_mask=attention_mask,
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
             layer_idx=self.layer_idx,

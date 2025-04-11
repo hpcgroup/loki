@@ -29,16 +29,6 @@ RETAIN_SAMPLING_RATE = 0.05
 total_scores = 1
 kept_scores = 1
 
-def print_debug(label: str, tensor: torch.Tensor, max_elems=10):
-    # shape, dtype
-    print(f"[DEBUG] {label}: shape={tuple(tensor.shape)}, dtype={tensor.dtype}")
-    # min, max, mean, std
-    print(f"         min={tensor.min().item():.4e}, max={tensor.max().item():.4e}, mean={tensor.mean().item():.4e}, std={tensor.std().item():.4e}")
-    # Optionally print a few elements
-    flat = tensor.view(-1)
-    print(f"         first {min(max_elems, flat.numel())} elems = {flat[:max_elems].tolist()}")
-    print("---------------------------------------------------")
-
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
     This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
@@ -159,24 +149,28 @@ def thresh_attention_forward(
     layer_idx: int = None,
     **kwargs,
 ):    
-
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    print_debug("Matmul QK * scaling", attn_weights)
     
-    if attention_mask is not None:
-        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-        attn_weights = attn_weights + causal_mask
-        print_debug("After first softmax (attn_weights_thresh)", attn_weights_thresh)
-
-    # Change commented line to set pre/post softmax
-    attn_weights_thresh = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-
     # Shape [batch, num_heads, query_length, key_length]
     B, H, Q, K = attn_weights.shape
     
+    if attention_mask is None:
+        attention_mask = torch.triu(
+        torch.ones(Q, K, dtype=torch.float) * float('-inf'),
+        diagonal=1
+        ).to(attn_weights.device)
+        attention_mask = attention_mask.unsqueeze(0).unsqueeze(0).expand(B, H, Q, K)
+
+    if attention_mask is not None:
+        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+        attn_weights = attn_weights + causal_mask
+    
+    # Change commented line to set pre/post softmax
+    attn_weights_thresh = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        
     # Collect percentile and query data for powerlaw fitting
     if not args.no_json:
         collect_powerlaw_stats(attn_weights_thresh, layer_idx)
@@ -249,13 +243,10 @@ def thresh_attention_forward(
 
     # softmax, dropout, etc.
     attn_weights = nn.functional.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query.dtype)
-    print_debug("After second softmax (attn_weights)", attn_weights)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
     
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
-    print_debug("Final attn_output", attn_output)
-
     return attn_output, attn_weights
 
 def save_experiment_data(args, ppl):

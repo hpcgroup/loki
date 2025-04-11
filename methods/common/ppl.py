@@ -113,11 +113,11 @@ def evaluate_ppl(model_id="facebook/opt-350m",
         target_ids[:, :-trg_len] = -100
 
         with torch.no_grad():
-            with torch.amp.autocast('cuda', dtype=dtype):
-                if past_key_values is not None:
-                    outputs = model(input_ids.cuda(), past_key_values=copy.deepcopy(past_key_values), labels=target_ids.cuda())
-                else:
-                    outputs = model(input_ids.cuda(), labels=target_ids.cuda())
+            # with torch.amp.autocast('cuda', dtype=dtype):
+            if past_key_values is not None:
+                outputs = model(input_ids.cuda(), past_key_values=copy.deepcopy(past_key_values), labels=target_ids.cuda())
+            else:
+                outputs = model(input_ids.cuda(), labels=target_ids.cuda())
             # loss is calculated using CrossEntropyLoss which averages over valid labels
             # N.B. the model only calculates loss over trg_len - 1 labels, because it internally shifts the labels
             # to the left by 1.
