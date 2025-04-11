@@ -61,7 +61,7 @@ def fit_powerlaw_linreg(x: np.ndarray, y: np.ndarray):
         a = np.exp(intercept)
         b = slope
         
-        return a, b, r2
+    return a, b, r2
 
 def collect_powerlaw_stats(attn_weights_softmax, layer_idx):
     global powerlaw_percentile_acc, powerlaw_query_acc, POWERLAW_SAMPLING_RATE
@@ -181,10 +181,6 @@ def thresh_attention_forward(
     PERCENTILE = args.percentile
     WARMUP_QUERIES = min(int(args.init_warmup), Q)
     
-    if WARMUP_QUERIES > 0:
-        row_scores = attn_weights_thresh[0, 0, 0, :1]  # just to see an example 
-        print_debug("Example row_scores for warmup [0,0,0,:1]", row_scores)
-    
     # Collect warmup data
     x_vals = []
     y_vals = []
@@ -209,7 +205,7 @@ def thresh_attention_forward(
     keep_mask = (attn_weights_thresh >= thresholds) 
     
     # Also keep the diagonal (most recent key/value) to ensure at least one value remains.
-    diag_mask = torch.eye(Q, device=attn_weights_thresh.device, dtype=torch.bool).view(1, 1, Q, Q)
+    diag_mask = torch.eye(Q, device=attn_weights_thresh.device, dtype=torch.bool).view(1, 1, Q, K)
     keep_mask = keep_mask | diag_mask
     
     # Collect keys retained data

@@ -15,7 +15,7 @@ class WandbLogger:
                 groupid = "lm_harness"
             else:
                 groupid = "ppl"
-            self.run = wandb.init(project='Loki', config=self.config, name=jobid, 
+            self.run = wandb.init(project='Thresh', config=self.config, name=jobid, 
                                   group=groupid, job_type='eval', tags=[groupid])
             wandb.define_metric("compression_ratio", summary="mean")
     
@@ -34,13 +34,20 @@ class WandbLogger:
     def log_lm_harness_results(self, tasks, results):
       if self.rank == '0':
           assert results is not None
-          for task in tasks.keys():
-              metric = tasks[task]
-              result = results[task]
-              if metric in result.keys():
-                  # Replace ,none with empty string
-                  metric_name = metric.replace(",none", "")
-                  self.run.log({task + "_" + metric_name: result[metric]})
+          for task, metadata in results.items():
+            for metric, result in metadata.items():  
+              if metric == 'alias' or metric == ' ' or not metric:
+                continue
+              metric = metric.replace(",none", "")
+              self.run.log({task + "_" + metric: result})
+            
+          # for task in tasks.keys():
+          #     metric = tasks[task]
+          #     result = results[task]
+          #     if metric in result.keys():
+          #         # Replace ,none with empty string
+          #         metric_name = metric.replace(",none", "")
+          #         self.run.log({task + "_" + metric_name: result[metric]})
     
     def finish(self):
       if self.rank == '0':

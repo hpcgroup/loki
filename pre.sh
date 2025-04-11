@@ -30,4 +30,4 @@ export HF_DATASETS_CACHE="$SCRATCH/hf_cache"
 
 export WANDB_DIR="$SCRATCH/wandb"
 export WANDB_CACHE_DIR="$SCRATCH/.cache/wandb"
-export WANDB_CONFIG_DIR="$SCRATCH/.cache/wandib_config"
+export WANDB_CONFIG_DIR="$SCRATCH/.cache/wandb_config"

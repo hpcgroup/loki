@@ -2,14 +2,14 @@
 #SBATCH -J thresh_lsh_eval
 #SBATCH -o outfiles/%x-%j.out
 #SBATCH -e outfiles/%x-%j.err
-#SBATCH -p gpu-a100         
+#SBATCH -p gh       
 #SBATCH -N 1
 #SBATCH -n 1
-#SBATCH -t 04:00:00
+#SBATCH -t 02:00:00
 #SBATCH --mail-type=all
 #SBATCH --mail-user=nkoley@umd.edu
 
-module load python3/3.9.7
+# module load python3/3.9.7
 source ../loki-venv/bin/activate
 
 # Scratch and cache paths

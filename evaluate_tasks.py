@@ -18,12 +18,12 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Hugging Face OpenLLM Tasks and associated metrics from April 2025
 # https://huggingface.co/spaces/open-llm-leaderboard-old/open_llm_leaderboard
 LM_HARNESS_TASKS = {
-    # "leaderboard_ifeval": "acc,none", # IndexError: index 1 is out of bounds for dimension 2 with size 1
-    # "leaderboard_bbh": "acc_norm,none", # All good, sbatch
-    "leaderboard_math_hard": "exact_match,none", # IndexError: index 1 is out of bounds for dimension 2 with size 1
-    # "leaderboard_gpqa": "acc_norm,none", # OOM
-    # "leaderboard_musr": "acc_norm,none", # OOM
-    # "leaderboard_mmlu_pro": "acc,none"
+    # "leaderboard_ifeval": "acc,none", # All good (DONE thresh, ~hf)
+    # "leaderboard_bbh": "acc_norm,none", # All good (DONE ~thresh, ~hf)
+    # "leaderboard_math_hard": "exact_match,none", # Some weird cuda error
+    # "leaderboard_gpqa": "acc_norm,none", # Runtime error w/ INT_MAX issues
+    # "leaderboard_musr": "acc_norm,none", # All good (DONE thresh, hf)
+    "leaderboard_mmlu_pro": "acc,none" # Some weird cuda error
 }
 
 if __name__ == "__main__":
@@ -90,11 +90,10 @@ if __name__ == "__main__":
                 model_args=f"pretrained={args.model_id}",
                 tasks = list(LM_HARNESS_TASKS.keys()),
                 log_samples=False,
-                batch_size=4
+                batch_size=8
             )
 
         if results is not None:
-            print(results["results"])
             if methods.LOGGER is not None:
                 methods.LOGGER.log_lm_harness_results(LM_HARNESS_TASKS, results["results"])
     else: # Use PPL Evaluation
@@ -117,7 +116,7 @@ if __name__ == "__main__":
         if methods.LOGGER is not None:
             methods.LOGGER.log_ppl(ppl)
             
-    save_experiment_data(args, ppl)
+    # save_experiment_data(args, ppl)
     #save_collected_attention_data(args)
     #compute_and_save_statistics(args, ppl)
     
