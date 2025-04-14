@@ -1,4 +1,5 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, AttentionInterface
+# from ../thresh/utils.py import thresh_attention_forward
 import torch
 from tqdm import tqdm
 from datasets import load_dataset, load_from_disk
@@ -23,6 +24,9 @@ def get_model(
     use_axonn=True,
     axonn_low_level_api=True,
 ):
+    # # Register new attention interface
+    # AttentionInterface.register("attention_thresh", thresh_attention_forward)
+    
     # Use the AxoNN library to shard the model
     if use_axonn:
         assert AXONN_AVAILABLE, "axonn is not installed"
@@ -64,7 +68,9 @@ def get_model(
             if rank == 0:
                 print("Parallelized with the slower auto parallelize API.")
     else:
+        # model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype, trust_remote_code=True, attn_implementation="thresh_attention").to(device)
         model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype, trust_remote_code=True).to(device)
+        
 
     return model
 

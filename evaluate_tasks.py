@@ -22,8 +22,8 @@ LM_HARNESS_TASKS = {
     # "leaderboard_bbh": "acc_norm,none", # All good (DONE ~thresh, ~hf)
     # "leaderboard_math_hard": "exact_match,none", # Some weird cuda error
     # "leaderboard_gpqa": "acc_norm,none", # Runtime error w/ INT_MAX issues
-    # "leaderboard_musr": "acc_norm,none", # All good (DONE thresh, hf)
-    "leaderboard_mmlu_pro": "acc,none" # Some weird cuda error
+    "leaderboard_musr": "acc_norm,none", # All good (DONE thresh, hf)
+    # "leaderboard_mmlu_pro": "acc,none" # Some weird cuda error
 }
 
 if __name__ == "__main__":
@@ -105,7 +105,7 @@ if __name__ == "__main__":
         # Low level API not available for Mixtral or in the H2O modification
         if args.model_id == "mistralai/Mixtral-8x22B-v0.1" or args.use_h2o:
             use_axonn_low_level_api = False
-
+        
         ppl = evaluate_ppl(model_id=args.model_id,
                     dataset=args.dataset,
                     sequence_length=args.sequence_length,

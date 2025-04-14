@@ -29,6 +29,9 @@ RETAIN_SAMPLING_RATE = 0.05
 total_scores = 1
 kept_scores = 1
 
+# Could probably make this into an object
+global_thresh_data = {}
+generation_step = 0
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -57,7 +60,7 @@ def fit_powerlaw_linreg(x: np.ndarray, y: np.ndarray):
     r2 = 1.0 - ss_res/ss_tot if ss_tot != 0 else 1.0
     a = np.exp(intercept)
     b = slope
-    
+        
     return a, b, r2
 
 def collect_powerlaw_stats(attn_weights_softmax, layer_idx):
@@ -175,74 +178,117 @@ def thresh_attention_forward(
         collect_powerlaw_stats(attn_weights_thresh, layer_idx)
         
     # -- THRESH START --
-    global total_scores, kept_scores
+    global total_scores, kept_scores, global_thresh_data, generation_step
 
-    PERCENTILE = args.percentile
-    WARMUP_QUERIES = min(int(args.init_warmup), Q)
-    
-    # Collect warmup data
-    x_vals = []
-    y_vals = []
-    for i in range(WARMUP_QUERIES):
-        # Valid keys for query row i: first (i+1) elements
-        row_scores = attn_weights_thresh[0, 0, i, : i+1]
-        quantile_value = torch.quantile(row_scores.float(), PERCENTILE).item()
-        x_vals.append(i)
-        y_vals.append(quantile_value)
-    
-    x_np = np.array(x_vals, dtype=float)
-    y_np = np.array(y_vals, dtype=float)
-    
-    a, b, _ = fit_powerlaw_linreg(x_np, y_np)
+    # Increment generation step (essentially will start at 1)
+    if layer_idx == 0:
+        generation_step += 1
 
-    # Generate threshold matrix
-    thresholds = torch.arange(1, Q + 1, device=attn_weights_thresh.device, dtype=attn_weights_thresh.dtype)
-    thresholds = a * (thresholds ** b)
-    thresholds = thresholds.view(1, 1, Q, 1)  # cast size
+    # In prefill (regular attention)
+    if Q > 1:
+        global_thresh_data = {}
+        generation_step = 0
 
-    # Generate mask based on threshold
-    keep_mask = (attn_weights_thresh >= thresholds) 
-    
-    # Also keep the diagonal (most recent key/value) to ensure at least one value remains.
-    diag_mask = torch.eye(Q, device=attn_weights_thresh.device, dtype=torch.bool).view(1, 1, Q, K)
-    keep_mask = keep_mask | diag_mask
-    
-    # Collect keys retained data
-    if not args.no_json:
-        global retain_acc, RETAIN_SAMPLING_RATE
+        # regular attention
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
         
-        for head_idx in range(H):
-            if random.random() < RETAIN_SAMPLING_RATE: # Sample across layers and heads
-                for query_idx in range(Q):
-                    query_total_scores = query_idx + 1
-                    query_kept_scores = keep_mask[0, head_idx, query_idx, :query_idx+1].sum().item()
-                    
-                    query_retain = query_kept_scores / query_total_scores
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous()
 
-                    retain_acc.append({
-                        "layer_idx": layer_idx,
-                        "head_idx": head_idx,
-                        "query_idx": query_idx,
-                        "retain": query_retain
-                    })
+        return attn_output, attn_weights
+  
+    # Generative decoding
+    elif Q == 1: 
+        # Check if we can calculate warmup
+        if not global_thresh_data[layer_idx]["warmup_complete"] and generation_step > args.init_warmup:
+            x_np = np.array(global_thresh_data[layer_idx]["x_vals"], dtype=float)
+            y_np = np.array(global_thresh_data[layer_idx]["y_vals"], dtype=float)
 
-    # Increment num_scores and kept_scores
-    total_scores += B * H * (((Q+1) * K)//2)    
-    kept_scores += keep_mask.sum().item()
-    
-    # Create masked attention: entries not kept are set to -inf.
-    attn_weights_masked = torch.full_like(attn_weights, float('-inf'))
-    attn_weights_masked[keep_mask] = attn_weights[keep_mask]
-    
+            a, b, _ = fit_powerlaw_linreg(x_np, y_np)
+
+            global_thresh_data[layer_idx]["a"] = a
+            global_thresh_data[layer_idx]["b"] = b         
+
+            global_thresh_data[layer_idx]["warmup_complete"] = True    
+
+        # Warmup incomplete (normal_attn & collect warmup)
+        elif not global_thresh_data[layer_idx]["warmup_complete"]:
+            # Create layer idx specific datapoint if doesn't exist
+            if layer_idx not in global_thresh_data:
+                global_thresh_data[layer_idx] = {
+                    "x_vals": [],
+                    "y_vals": [],
+                    "a": 1.0,
+                    "b": -1.0,
+                    "warmup_complete": False
+                }
+
+            row_scores = attn_weights_thresh[0, 0, 0, :1]
+            quantile_value = torch.quantile(row_scores.float(), args.percentile).item()
+
+            global_thresh_data[layer_idx]["x_vals"].append(generation_step)
+            global_thresh_data[layer_idx]["y_vals"].append(quantile_value)
+
+            # regular attention
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+            attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+            
+            attn_output = torch.matmul(attn_weights, value_states)
+            attn_output = attn_output.transpose(1, 2).contiguous()
+
+            return attn_output, attn_weights
+
+        # Warmup complete (thresh_attn)
+        if global_thresh_data[layer_idx]["warmup_complete"]:
+            # Generate threshold matrix
+            thresholds = torch.arange(1, Q + 1, device=attn_weights_thresh.device, dtype=attn_weights_thresh.dtype)
+            thresholds = a * (thresholds ** b)
+            thresholds = thresholds.view(1, 1, Q, 1)  # cast size
+
+            # Generate mask based on threshold
+            keep_mask = (attn_weights_thresh >= thresholds) 
+            
+            # Also keep the diagonal (most recent key/value) to ensure at least one value remains.
+            diag_mask = torch.zeros(Q, K, device=attn_weights_thresh.device, dtype=torch.bool).view(1, 1, Q, K)
+            diag_mask[0, generation_step-1] = True
+            keep_mask = keep_mask | diag_mask
+
+            # Collect keys retained data
+            if not args.no_json:
+                global retain_acc, RETAIN_SAMPLING_RATE
+                
+                for head_idx in range(H):
+                    if random.random() < RETAIN_SAMPLING_RATE: # Sample across layers and heads
+                        for query_idx in range(Q):
+                            query_total_scores = query_idx + 1
+                            query_kept_scores = keep_mask[0, head_idx, query_idx, :query_idx+1].sum().item()
+                            
+                            query_retain = query_kept_scores / query_total_scores
+
+                            retain_acc.append({
+                                "layer_idx": layer_idx,
+                                "head_idx": head_idx,
+                                "query_idx": query_idx,
+                                "retain": query_retain
+                            })
+                
+            # Increment num_scores and kept_scores
+            total_scores += B * H * (((Q+1) * K)//2)    
+            kept_scores += keep_mask.sum().item()
+
+            # Create masked attention: entries not kept are set to -inf.
+            attn_weights_masked = torch.full_like(attn_weights, float('-inf'))
+            attn_weights_masked[keep_mask] = attn_weights[keep_mask]
+
+            # softmax, dropout, etc.
+            attn_weights = nn.functional.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query.dtype)
+            attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+            
+            attn_output = torch.matmul(attn_weights, value_states)
+            attn_output = attn_output.transpose(1, 2).contiguous()
+            return attn_output, attn_weights
     # -- THRESH END --
-
-    # softmax, dropout, etc.
-    attn_weights = nn.functional.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
-    
-    attn_output = torch.matmul(attn_weights, value_states)
-    attn_output = attn_output.transpose(1, 2).contiguous()
-    return attn_output, attn_weights
 
 def save_experiment_data(args, ppl):
     filename = f"thresh_{args.model_id.split('/')[-1]}_pctl{args.percentile}_iwmp{args.init_warmup}"

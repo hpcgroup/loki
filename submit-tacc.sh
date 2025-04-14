@@ -34,6 +34,7 @@ srun python -u evaluate_tasks.py \
     --model-id meta-llama/Llama-2-7b-hf \
     --model-type llama \
     --dataset wikitext-valid \
+    --use-wandb \
     --use-thresh \
     --no-json \
     --lm-harness-eval

@@ -12,7 +12,8 @@ from torch import nn
 import torch.nn.functional as F
 from functools import partial
 
-from .utils import thresh_attention_forward
+# from .utils import thresh_attention_forward
+from .utils_decode import thresh_attention_forward
 import methods
 
 
