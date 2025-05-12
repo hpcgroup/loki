@@ -1,0 +1,2 @@
+/home/cdilgren/loki/.venv/lib/python3.10/site-packages/apex-0.1-py3.10-linux-x86_64.egg/apex/contrib/sparsity/sparse_masklib.py:42: UserWarning: The torch.cuda.*DtypeTensor constructors are no longer recommended. It's best to use methods such as torch.tensor(data, dtype=*, device='cuda') to create tensors. (Triggered internally at ../torch/csrc/tensor/python_tensor.cpp:83.)
+  mask = torch.cuda.IntTensor(matrix.shape).fill_(1).view(-1,m)

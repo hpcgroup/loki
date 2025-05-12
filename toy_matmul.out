@@ -1,0 +1,69 @@
+Loading cuda/12.3.0/gcc/11.3.0/x86_64
+  Loading requirement: gcc/11.3.0
+Could not find permutation search CUDA kernels, falling back to CPU path
+[ASP][Info] permutation_search_kernels can be imported.
+[ASP][Warning] torchvision cannot be imported.
+[set_permutation_params_from_asp] Set permutation needed parameters
+	Sparse parameter names: ['linear:weight']
+	All parameter names: [':linear.weight', ':linear.bias', 'linear:weight', 'linear:bias']
+[set_identical_seed] Set the identical seed: 1 for all GPUs to make sure the same results generated in permutation search
+
+[permute_model] Permuting the model
+[build_fx_graph] The torch version is: 2.1.0+cu121, version major is: 2, version minor is: 1, version minimum is: 0+cu121
+[build_fx_graph] The Torch.FX is supported.
+
+[build_fx_graph] Print the model structure with pure PyTorch function
+SimpleModel(
+  (linear): Linear(in_features=4096, out_features=4096, bias=True)
+)
+
+[print_raw_fx_graph] Print the intermediate representation (IR) with Torch.FX
+graph():
+    %x : [num_users=1] = placeholder[target=x]
+    %linear : [num_users=1] = call_module[target=linear](args = (%x,), kwargs = {})
+    return linear
+
+[print_raw_fx_graph] Print the intermediate representation (IR) with Torch.FX in a table format
+[print_raw_fx_graph][Warning] 'print_tabular' relies on the library `tabulate`; run `pip install tabulate` to install it.
+
+[build_fx_graph] Build the module name and type dictionary
+[build_fx_graph] module_name: , module type: <class '__main__.SimpleModel'>
+[build_fx_graph] module_name: linear, module type: <class 'torch.nn.modules.linear.Linear'>
+
+[build_fx_graph] Print the children and parents relationship for each layer
+[build_fx_graph] This is the 'input' node: x
+[build_fx_graph] This is the 'call_module' node: linear, its parent list: ['x'], its children list: ['output'], its type: torch.nn.modules.linear.Linear
+[build_fx_graph] This is the 'output' node: output
+
+[init_permutation_flags] Initialize the permutation flags for each node according to module type and parameters
+Initializing node linear of type torch.nn.modules.linear.Linear: {'parents': ['x'], 'children': ['output'], 'fx_op': 'call_module', 'module_type': 'torch.nn.modules.linear.Linear', 'groups_param': 'None', 'C_param': '4096', 'K_param': '4096'}
+	Initialized node linear of type torch.nn.modules.linear.Linear: {'parents': ['x'], 'children': ['output'], 'fx_op': 'call_module', 'module_type': 'torch.nn.modules.linear.Linear', 'groups_param': 'None', 'C_param': '4096', 'K_param': '4096', 'C_permutable': True, 'K_permutable': True, 'K_passthru': False, 'is_real': True, 'C_permuted': False, 'K_permuted': False, 'sibling_group_id': None, 'coparent_group_id': None}
+
+[find_real_parents] Find the real parents for each node according to the whole network graph built with Torch.FX
+[find_real_parents] linear has 0 real parents: set()
+
+[find_real_children] Find the real children for each node according to the whole network graph built with Torch.FX
+[find_real_children] node_name: 'linear', children: ['output']
+[find_real_children] linear has 0 real children: set()
+[make_sibling_coparent_groups]
+New sibling group 0 with GCD(C) of 4096: ['linear']
+New coparent group 0: {'linear'}
+[fixup_concats]
+[enforce_dimension_agreement]
+	linear has no real parents, disabling permutations along C
+	linear has no real children, disabling permutations along K
+Making a pass at propagating permutation flags
+	node linear has poisoned the sibling group of ['linear']: {'parents': ['x'], 'children': ['output'], 'fx_op': 'call_module', 'module_type': 'torch.nn.modules.linear.Linear', 'groups_param': 'None', 'C_param': '4096', 'K_param': '4096', 'C_permutable': False, 'K_permutable': False, 'K_passthru': False, 'is_real': True, 'C_permuted': False, 'K_permuted': False, 'sibling_group_id': 0, 'coparent_group_id': 0, 'real_parents': [], 'real_children': []}
+	node linear has poisoned the coparent group of {'linear'}: {'parents': ['x'], 'children': ['output'], 'fx_op': 'call_module', 'module_type': 'torch.nn.modules.linear.Linear', 'groups_param': 'None', 'C_param': '4096', 'K_param': '4096', 'C_permutable': False, 'K_permutable': False, 'K_passthru': False, 'is_real': True, 'C_permuted': False, 'K_permuted': False, 'sibling_group_id': 0, 'coparent_group_id': 0, 'real_parents': [], 'real_children': []}
+Skipping permutation for sibling group 0 since it does not allow permutations along C
+
+[permute_model] Take 0.0000 seconds to finish search_for_good_permutation function.
+[check_graph_for_unpermuted_nodes] found nodes that missed permutations along 0 dimensions.
+
+[compute_sparse_masks] permuted the model.
+[compute_sparse_masks] Take 0.0021 seconds to find and apply permutations.
+[ASP] Enabled 50.00% sparsity for linear::weight of size=torch.Size([4096, 4096]) and type=torch.float32 with magnitude tensor(91732.6875, device='cuda:0')
+Input size: 64x4096, Output size: 4096
+Dense time: 0.279 ms
+Sparse time: 0.240 ms
+Speedup: 1.16x

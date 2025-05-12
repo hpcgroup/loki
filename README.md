@@ -1,96 +1,44 @@
-# Loki
-
-This repository contains the code related to the experiments in the paper [Loki: Low-Rank Keys for Efficient Sparse Attention](https://arxiv.org/abs/2406.02542).
-We provide the code to compute the PCA of the keys for various models, baseline method implementations and kernels for Loki used in the paper, along with scripts to evaluate the methods on perplexity evaluation and downstream tasks.
-
-## Installation
-You need to install the requirements as follows:
-
-```
-pip install -r requirements.txt
-```
-
-Note: The code requires specific versions of the huggingface transformers library present in the requirements.txt file. It will not work with other versions.
-
-## Usage
-
-#### Compute PCA of keys for a model
-Say you want to compute the PCA transform for the keys of Llama-2-7b model. You can do this by following the steps below:
-
-- Run perplexity evaluation on the model on a target dataset to save the keys, queries and values tensors.
-  ```bash
-  # The --use-axonn flag is optional and is used to shard the model over multiple GPUs using AxoNN
-
-  python -u evaluate_tasks.py --sequence-length 4096 --model-id meta-llama/Llama-2-7b-hf --model-type llama --dataset wikitext-valid --save-tensors --tensor-dir <Directory to save tensors> --use-topk --top-k 1 [--use-axonn]
-  ```
-  List of possible datasets - wikitext-valid, bookcorpus, c4
-
-- Compute the PCA of the generated keys: In the `pca_analysis` directory, run the following command:
-
-  ```bash
-  python pca.py key <NUM_LAYERS> <Path to saved key tensors> <Path to output the PCA transforms>
-  ```
-Verify that the PCA transform are saved in the output directory. Do not modify the subdirectory structure of the output directory as it is used by the downstream tasks evaluation code.
-
-#### Running the ML evaluations
-Once the PCA transform is computed, we can run the ML evaluations using Loki. The following command runs the evaluation on the downstream tasks using the PCA transform computed in the previous step:
-
-```bash
-python -u evaluate_tasks.py \
-  --sequence-length 4096 \
-  --model-id meta-llama/Llama-2-7b-hf \
-  --model-type llama 
-  --use-pca-topk 
-  --top-r <16/32/64> 
-  --top-k <0.125/0.25/0.5> \
-  --rotary-type <prerotary/postrotary> \
-  --dataset <Dataset to compute perplexity on, Default: wikitext-test> \
-  --transform-dataset <Dataset used to compute PCA: wikitext/bookcorpus/c4, Default:wikitext> \
-  [--lm-harness-eval] \ # Flag to evaluate the model on the LM Harness Tasks
-  [--use-wandb] \ # Optional flag to log the results to wandb
-  [--use-axonn] # Optional flag to shard the model over multiple GPUs using AxoNN
-```
+# Loki (Naive Sparsity)
 
 
-#### Running compute evaluation
-To run the compute evaluation, you can use the following command:
+## Attention Query-Key Sparsity Mode
 
+When running with `sparsity_type = "attention-query-key"` (enabled via `--run-attention-query-key-sparsity` flag), the implementation:
+
+1. Applies magnitude-based pruning to keep only the top 50% of weights by magnitude in linear projection layers
+2. Optimizes the attention mechanism's query-key operations using torch's native sparse matrix multiplication (more below)
+3. The sparse representations are computed once and reused across forward passes
+
+
+## Modified Files
+- `test_attention_benchmark_fixed.py`: Main benchmark script
+- `./methods/pca_topk/attention_benchmark_apex.py`: Implementation of attention mechanisms
+- `./methods/pca_topk/sparsity_utils.py`: Utilities for sparse operations
+
+## Usage Example
+
+Benchmark for vanilla vs loki vs sparse naive
 ```bash
 python evaluate_compute.py
 
 ```
-This will run the attention benchmark with Loki and vanilla attention assuming a Llama2-13B type model and save the results in a `compute_files` directory.
 
-<!---
-#### Reproducing the results
-We have provided slurm scripts to evaluate the baseline methods and Loki on the downstream tasks. You can run the scripts as follows:
+Run the benchmark with sparse attention query-key optimization:
 
-- Generating the keys for the models:
-First, you need to modify the template saver script based on your machine slurm configuration. You also need to modify the OUT_TENSOR_DATA_PATH in the script to save the keys to the desired location. Then you can run the script as follows:
 
-```
-# Generate batch scripts for the "saver" experiment
-<>
-
-# Run the batch scripts for the particular model
-<>
-
+```bash
+python test_attention_benchmark_fixed.py --orig-pca-dir /cmlscratch/sukriti5/pca_stuff/pca_components --cache-seq-len 3500 --num-gen-steps 10 --top-d 32 --num-heads 16 --run-loki-without-sparsity --run-attention-query-key-sparsity --output-csv ./attention_query_key_results.csv
 ```
 
-- Compute the PCA transform for the generated keys:
-```
+### Sparse Matrix Multiplication
+- For 2D tensors: Using `torch.sparse.mm` for efficient sparse matrix multiplication
+- For 3D tensors (batched attention operations): Using `torch.bmm` for batched multiplication
+- Precision handling: Converting half-precision tensors to float32 temporarily for sparse operations, as PyTorch's sparse operations don't directly support half-precision
 
-```
+### Sparsity Configuration
+- Default sparsity level: 50% (ie keeping top 50% of weights by magnitude for now)
+- Implementation: Magnitude-based pruning applied to linear projection layers
+- Format: Using `torch.sparse_coo_tensor` to create COO format sparse representations
+- One-time sparse conversion: In the `SparseLinear` class, sparse representation is created only once via the `make_sparse()` method. For caching, rhe sparse weight (`self._sparse_weight`) is stored as a class attribute and reused across forward passes
 
-### With AxoNN's tensor parallelism
-
-Additionally, you can add `--use-axonn` flag to shard a large model like llama-13b over multiple GPUs.
-For this you will need to launch the code using mpirun
-
-
-```
-mpirun -np 2 python -u evaluate_tasks.py --sequence-length 4096 --model-id meta-llama/Llama-2-13b-hf --model-type llama --use-h2o --heavy-ratio 0.1 --use-axonn
-```
---->
-
-
+I've followed the same benchmark/attributes as in yours and Connor's benchmark files.
