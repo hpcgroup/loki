@@ -56,6 +56,8 @@ def parse_args():
                         help="Whether to run Loki without sparsity benchmark")
     parser.add_argument("--run-attention-query-key-sparsity", action="store_true", default=True,
                         help="Whether to run Loki with attention-query-key sparsity benchmark")
+    parser.add_argument("--run-vanilla", action="store_true", default=True,
+                        help="Whether to run vanilla attention benchmark (without Loki)")
     parser.add_argument("--sparsity-type", type=str, default="attention-query-key", 
                         help="Sparsity type to use: attention-query-key")
     
@@ -108,6 +110,7 @@ if __name__ == "__main__":
             sparse_filename = f"compute_files/prompt_{args.cache_seq_len}_gen_{args.num_gen_steps}_topk_{topk}_topr_{topr}_sparse.json"
             loki_without_sparsity_filename = f"compute_files/prompt_{args.cache_seq_len}_gen_{args.num_gen_steps}_loki_without_sparsity_topk_{topk}_topr_{topr}.json"
             attention_query_key_filename = f"compute_files/prompt_{args.cache_seq_len}_gen_{args.num_gen_steps}_attention_query_key_topk_{topk}_topr_{topr}.json"
+            vanilla_filename = f"compute_files/prompt_{args.cache_seq_len}_gen_{args.num_gen_steps}_vanilla.json"
             
             # Variable to track if we have sparse results
             times_sparse = None
@@ -234,6 +237,51 @@ if __name__ == "__main__":
                     print(f"Error in Loki + Attention Query/Key Sparsity benchmark: {str(e)}")
                     traceback.print_exc()
             
+            # Fourth run: Vanilla Attention (without Loki)
+            times_vanilla = None
+            if args.run_vanilla:
+                print(f"\nRunning Vanilla Attention benchmark (without Loki)...")
+                try:
+                    # Free memory before vanilla benchmark
+                    free_gpu_memory()
+                    
+                    _, times_vanilla = benchmark_attention(
+                        prompt_length=args.cache_seq_len,
+                        num_gen_steps=args.num_gen_steps,
+                        batch_size=args.batch_size,
+                        num_heads=args.num_heads,
+                        num_layers=args.num_layers,
+                        topk=topk,
+                        topr=topr,
+                        vanilla=True,   # Use vanilla attention
+                        pcatopk=False,  # Don't use PCA TopK
+                        dtype=torch.float16
+                    )
+                    
+                    # Add missing attributes for consistent comparison with other methods
+                    if times_vanilla:
+                        # These operations don't exist in vanilla but are in other methods
+                        missing_attrs = ['project', 'top-k', 'reshape-0', 'reshape-1', 'qk-matmul-2', 'query-key-sparsity']
+                        for attr in missing_attrs:
+                            if attr not in times_vanilla:
+                                times_vanilla[attr] = 0.0
+                    else:
+                        print("Error: No timing results returned for Vanilla Attention benchmark")
+                    
+                    # Save vanilla results
+                    print(f"Saving to {vanilla_filename}")
+                    with open(vanilla_filename, "w") as f:
+                        json.dump(times_vanilla, f, indent=2)
+                    
+                    # Print vanilla results
+                    print("\nVanilla Attention Times:")
+                    for key, value in times_vanilla.items():
+                        print(f"  {key}: {value:.6f} s")
+                    print(f"Net time (minus cache updates): {times_vanilla.get('total', 0) - times_vanilla.get('cache-update', 0):.6f} s")
+                except Exception as e:
+                    print(f"Error in Vanilla Attention benchmark: {str(e)}")
+                    traceback.print_exc()
+            
             # Save to CSV if requested
             if args.output_csv:
                 import csv
@@ -281,6 +329,19 @@ if __name__ == "__main__":
                             'total_time': times_attention_query_key.get('total', 0),
                             'cache_update_time': times_attention_query_key.get('cache-update', 0),
                             'net_time': times_attention_query_key.get('total', 0) - times_attention_query_key.get('cache-update', 0)
+                        })
+                        wrote_results = True
+                        
+                    # Vanilla Attention row if available
+                    if args.run_vanilla and times_vanilla:
+                        writer.writerow({
+                            'method': 'vanilla_attention',
+                            'prompt_length': args.cache_seq_len,
+                            'gen_steps': args.num_gen_steps,
+                            'top_d': args.top_d,
+                            'total_time': times_vanilla.get('total', 0),
+                            'cache_update_time': times_vanilla.get('cache-update', 0),
+                            'net_time': times_vanilla.get('total', 0) - times_vanilla.get('cache-update', 0)
                         })
                         wrote_results = True
                 

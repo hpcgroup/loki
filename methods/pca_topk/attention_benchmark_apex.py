@@ -348,12 +348,10 @@ def micro_benchmark_pca_topk(cache, prompt_keys, top_r, top_k, num_layers, timer
                 
         timers.stop('total')
     else:
-        # Fallback implementation with basic operations (non-optimized)
-        # ...omitted for brevity...
         pass
 
 
-def micro_bench_actual_attention(cache, prompt_keys, num_layers, timers, num_gen_steps=2000):
+def micro_bench_actual_attention(cache, prompt_keys, num_layers, timers, num_gen_steps=2000, sparsity_type=None):
     import time
     torch.set_float32_matmul_precision("highest")
 
@@ -362,6 +360,12 @@ def micro_bench_actual_attention(cache, prompt_keys, num_layers, timers, num_gen
     num_heads = prompt_keys[0].shape[1]
     hidden_size = num_heads * head_dim
     dtype = prompt_keys[0].dtype
+    
+    # Initialize sparsity handler if needed
+    sparsity_handler = None
+    if sparsity_type:
+        from methods.pca_topk.sparsity_utils import SparsityHandler
+        sparsity_handler = SparsityHandler(sparsity_type)
 
     # Initialize dense attention projections for each layer (more realistic)
     attention_projections = [
@@ -507,7 +511,8 @@ def benchmark_attention(batch_size=1,
                 cache3.update(prompt_keys[i], prompt_values[i], prompt_keys[i], i)
             timers = Timers()
             micro_bench_actual_attention(cache3, prompt_keys, num_layers=num_layers, 
-                                         num_gen_steps=num_gen_steps, timers=timers)
+                                         num_gen_steps=num_gen_steps, timers=timers,
+                                         sparsity_type=sparsity_type)
             del cache3
             times = timers.get_times()
         print("Average time (minus cache updates) is - ")

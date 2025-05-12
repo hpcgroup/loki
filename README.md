@@ -17,7 +17,14 @@ When running with `sparsity_type = "attention-query-key"` (enabled via `--run-at
 
 ## Usage Example
 
+Benchmark for vanilla vs loki vs sparse naive
+```bash
+python evaluate_compute.py
+
+```
+
 Run the benchmark with sparse attention query-key optimization:
+
 
 ```bash
 python test_attention_benchmark_fixed.py --orig-pca-dir /cmlscratch/sukriti5/pca_stuff/pca_components --cache-seq-len 3500 --num-gen-steps 10 --top-d 32 --num-heads 16 --run-loki-without-sparsity --run-attention-query-key-sparsity --output-csv ./attention_query_key_results.csv
