@@ -482,7 +482,7 @@ def benchmark_attention(batch_size=1,
     times_pca_topk = None
     if pcatopk:
         print("PCA TOPK Optimized")
-        for _ in range(10):
+        for _ in range(100):
             cache2 = PcaTopKCache()
             for i in range(num_layers):
                 cache2.update(prompt_keys[i].transpose(0,1).contiguous(), 
@@ -505,7 +505,7 @@ def benchmark_attention(batch_size=1,
     times_vanilla = None
     if vanilla:
         print("Actual Attention")
-        for _ in range(10):
+        for _ in range(100):
             cache3= PcaTopKCache()
             for i in range(num_layers):
                 cache3.update(prompt_keys[i], prompt_values[i], prompt_keys[i], i)
